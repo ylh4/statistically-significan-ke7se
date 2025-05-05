@@ -121,10 +121,11 @@ export default function DisparityCalculator() {
             form.setValue('alpha', numValue, { shouldValidate: true });
         } else if (value === '') {
             // Allow temporary empty state, validation will catch it if submitted
-            form.setValue('alpha', '' as any, { shouldValidate: true });
+             // Use null instead of empty string for potentially numeric fields
+             form.setValue('alpha', null as any, { shouldValidate: true });
         } else {
             // If input is not a number (e.g., "abc"), keep it in input but mark as invalid
-            form.setValue('alpha', value as any, { shouldValidate: true });
+             form.setValue('alpha', value as any, { shouldValidate: true });
         }
 
 
@@ -217,7 +218,7 @@ export default function DisparityCalculator() {
     try {
       // Use the calculation function
       const results = performMultiComparisonReport({
-        alpha: data.alpha,
+        alpha: data.alpha ?? 0.05, // Handle null alpha from input
         groups: data.groups,
       });
 
@@ -384,7 +385,7 @@ export default function DisparityCalculator() {
 
        const imgData = canvas.toDataURL('image/png');
        const pdf = new jsPDF({
-           orientation: 'l', // landscape
+           orientation: 'p', // portrait CHANGED from 'l'
            unit: 'pt', // points
            format: 'a4', // page format
            putOnlyUsedFonts:true,
@@ -401,14 +402,20 @@ export default function DisparityCalculator() {
         const availableWidth = pdfWidth - margin * 2;
         const availableHeight = pdfHeight - margin * 2;
 
-        // Calculate the ratio to fit the image within the available space
-        const ratio = Math.min(availableWidth / imgWidth, availableHeight / imgHeight);
+        // Calculate the ratio to fit the image width within the available width
+        const widthRatio = availableWidth / imgWidth;
+         const heightRatio = availableHeight / imgHeight; // Consider height ratio as well
+
+         // Use the smaller ratio to ensure the entire image fits without distortion
+         const ratio = Math.min(widthRatio, heightRatio);
+
 
         // Calculate the dimensions and position of the image on the PDF
-        const imgX = margin;
-        const imgY = margin;
         const effectiveImgWidth = imgWidth * ratio;
         const effectiveImgHeight = imgHeight * ratio;
+         // Center the image horizontally and vertically within the margins
+         const imgX = margin + (availableWidth - effectiveImgWidth) / 2;
+         const imgY = margin + (availableHeight - effectiveImgHeight) / 2;
 
 
        // Add the image to the PDF, positioned with margins
@@ -492,9 +499,9 @@ export default function DisparityCalculator() {
                                      step="any" // Use 'any' for floating point
                                      min="0.00000001" // Smallest positive value (approx)
                                      max="1"
-                                     // Use spread for register, but keep explicit onChange for clearing results
-                                     {...form.register("alpha")}
-                                     value={form.watch('alpha')} // Ensure input reflects form state including empty string and clamped values
+                                     // Use spread for register, but keep explicit onChange for handling
+                                      {...form.register("alpha")}
+                                     value={form.watch('alpha') ?? ''} // Ensure input reflects form state including null/empty string and clamped values
                                      onChange={handleAlphaChange}
                                      className={cn("border", form.formState.errors.alpha ? "border-destructive" : "border-input")}
                                      placeholder="e.g., 0.05"
@@ -556,7 +563,7 @@ export default function DisparityCalculator() {
                                                  {...form.register(`groups.${index}.experienced`)}
                                                  className={cn("border", form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input")}
                                                  onChange={(e) => {
-                                                     form.setValue(`groups.${index}.experienced`, e.target.value as any, { shouldValidate: true });
+                                                     form.setValue(`groups.${index}.experienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
                                                      // Only clear results if the form was previously submitted and valid
                                                      // This allows minor edits without losing the report unless explicitly regenerated
                                                      // setReportResults(null);
@@ -577,7 +584,7 @@ export default function DisparityCalculator() {
                                                  {...form.register(`groups.${index}.notExperienced`)}
                                                  className={cn("border", form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "border-input")}
                                                   onChange={(e) => {
-                                                      form.setValue(`groups.${index}.notExperienced`, e.target.value as any, { shouldValidate: true });
+                                                      form.setValue(`groups.${index}.notExperienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
                                                       // setReportResults(null);
                                                       // setCalculationError(null);
                                                        // if (reportResults) form.handleSubmit(onSubmit)(); // Optional: Recalculate immediately
