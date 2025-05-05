@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { FormEvent } from 'react';
@@ -27,6 +28,7 @@ import {
     type ContingencySummaryData,
     type OverallTestStats,
     type PairwiseResultsMatrix,
+    type ContributionDetail, // Import ContributionDetail type
     formatScientific,
     formatDecimal,
     formatPercent
@@ -223,8 +225,8 @@ export default function DisparityCalculator() {
 
         if (results.errors && results.errors.length > 0) {
              // Filter out warnings about expected counts < 5 for the main error state
-            const criticalErrors = results.errors.filter(e => !e.toLowerCase().includes('expected count less than 5'));
-            const warningErrors = results.errors.filter(e => e.toLowerCase().includes('expected count less than 5'));
+            const criticalErrors = results.errors.filter(e => !e.toLowerCase().includes('warning:'));
+            const warningErrors = results.errors.filter(e => e.toLowerCase().includes('warning:'));
 
              if (criticalErrors.length > 0) {
                 const errorMsg = criticalErrors.join('; ');
@@ -239,7 +241,7 @@ export default function DisparityCalculator() {
              } else if (warningErrors.length > 0) {
                  const warningMsg = warningErrors.join('; ');
                  // Set a non-blocking error state for warnings
-                  setCalculationError(`Calculation completed with warnings: ${warningMsg}`);
+                  setCalculationError(`${warningMsg}`); // Display warnings without "Error:" prefix
                   toast({
                       title: "Calculation Warning",
                       description: warningMsg,
@@ -448,11 +450,12 @@ export default function DisparityCalculator() {
         ? "Statistically different."
         : "Not statistically different.";
 
+    // Standard follow-up, potentially adjust based on context if needed
     const followUpText = isSignificant
-        ? " Potential racial disparity; pursue further investigation." // Standard follow-up
+        ? " Potential disparity; pursue further investigation."
         : "";
 
-    const fullText = interpretationText + (isSignificant ? followUpText : "");
+    const fullText = interpretationText + followUpText;
 
 
     return (
@@ -739,7 +742,7 @@ export default function DisparityCalculator() {
                      <CardContent className="space-y-6 pt-4">
                          {/* Display calculation errors/warnings */}
                           {calculationError && (
-                             <Alert variant="destructive" className="w-full mb-4">
+                             <Alert variant={calculationError.toLowerCase().includes('warning') ? "default" : "destructive"} className={cn("w-full mb-4", calculationError.toLowerCase().includes('warning') ? "border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400" : "")}>
                                  <AlertCircle className="h-4 w-4" />
                                  <AlertTitle>{calculationError.toLowerCase().includes('warning') ? "Warning" : "Error"}</AlertTitle>
                                  <AlertDescription>{calculationError}</AlertDescription>
@@ -770,14 +773,15 @@ export default function DisparityCalculator() {
                                                   <TableHead rowSpan={2} className="align-bottom pb-2">Category (Race)</TableHead>
                                                   <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
                                                   <TableHead rowSpan={2} className="text-center border-r align-bottom pb-2">% Experienced</TableHead>
-                                                  <TableHead colSpan={2} className="text-center">Expected</TableHead>
+                                                  <TableHead colSpan={2} className="text-center border-r">Expected</TableHead>
+                                                  <TableHead rowSpan={2} className="text-center align-bottom pb-2">Chi-Sq Contribution</TableHead>{/* Added Contribution Header */}
                                              </TableRow>
                                               <TableRow className="hover:bg-table-header-bg/90">
                                                    <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                                    <TableHead className="text-right border-r">Row Subtotal</TableHead>
-                                                   <TableHead className="text-right"># Did NOT Experience</TableHead>
-                                                   <TableHead className="text-right"># Experienced</TableHead>
+                                                   <TableHead className="text-right border-r"># Did NOT Experience</TableHead> {/* Added Expected Not Exp Header */}
+                                                   <TableHead className="text-right"># Experienced</TableHead> {/* Added Expected Exp Header */}
                                               </TableRow>
                                          </TableHeader>
                                          <TableBody>
@@ -788,8 +792,9 @@ export default function DisparityCalculator() {
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{row.rowTotal.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{formatPercent(row.percentExperienced)}</TableCell>
-                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell>
-                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4 border-r">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell> {/* Display Expected Not Exp */}
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell> {/* Display Expected Exp */}
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.chiSquareContribution, 3)}</TableCell>{/* Display Contribution */}
                                                  </TableRow>
                                              ))}
                                          </TableBody>
@@ -802,8 +807,9 @@ export default function DisparityCalculator() {
                                                      <TableCell className="text-right py-2 px-4 border-r">
                                                         {reportResults.totals.grandTotal > 0 ? formatPercent((reportResults.totals.totalExperienced / reportResults.totals.grandTotal) * 100) : 'N/A'}
                                                      </TableCell>
-                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedNotExperienced, 1)}</TableCell>
+                                                    <TableCell className="text-right py-2 px-4 border-r">{formatDecimal(reportResults.totals.totalExpectedNotExperienced, 1)}</TableCell>
                                                     <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedExperienced, 1)}</TableCell>
+                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalChiSquareContributions, 3)}</TableCell> {/* Display Total Contribution */}
                                                </TableRow>
                                           </TableFooter>
                                      </Table>
@@ -933,7 +939,7 @@ export default function DisparityCalculator() {
                                                                         isDiagonal ? 'bg-muted/30' : 'table-cell-tint', // Style diagonal differently
                                                                     )}
                                                                 >
-                                                                     {formatScientific(pValue, 3)} {/* Always show formatted p-value */}
+                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)} {/* Show dash for diagonal */}
                                                                     {/* Interpretation could be added via tooltip if needed */}
                                                                 </TableCell>
                                                             );
@@ -945,7 +951,7 @@ export default function DisparityCalculator() {
                                     </div>
                                      {/* Add interpretation notes based on significance */}
                                       <p className="text-xs text-muted-foreground italic mt-2">
-                                        <span className="text-destructive font-semibold">Red bold text</span> indicates the pairwise difference is statistically significant (p &lt; α_bonf). Potential racial disparity between these two groups. Pursue further investigation.
+                                        <span className="text-destructive font-semibold">Red bold text</span> indicates the pairwise difference is statistically significant (p &lt; α_bonf). Potential disparity between these two groups. Pursue further investigation.
                                       </p>
                                 </div>
                            )}

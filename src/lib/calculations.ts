@@ -24,6 +24,8 @@ export interface ContingencySummaryData extends GroupInput {
     // Added Expected values
     expectedExperienced: number;
     expectedNotExperienced: number;
+    // Add contribution for overall Chi-square
+    chiSquareContribution: number | null;
 }
 
 
@@ -55,6 +57,16 @@ export interface OverallTestStats {
 // The value is the Bonferroni-corrected p-value.
 export type PairwiseResultsMatrix = Record<string, Record<string, number | null>>; // Use null for diagonal or invalid pairs
 
+// Structure for individual contributions (for display and verification)
+export interface ContributionDetail {
+    category: string;
+    observedExperienced: number; // O_i
+    expectedExperienced: number; // E_i
+    chiSquareContrib: number; // (O_i - E_i)^2 / E_i
+    yatesContrib: number;     // (|O_i - E_i| - 0.5)^2 / E_i
+    gTestContrib: number;     // 2 * O_i * ln(O_i / E_i)
+}
+
 
 // Overall results structure returned by the main function
 export interface MultiComparisonResults {
@@ -69,7 +81,9 @@ export interface MultiComparisonResults {
       totalNotExperienced: number;
       totalExpectedExperienced: number;
       totalExpectedNotExperienced: number;
+      totalChiSquareContributions: number; // Sum of contributions for verification
     } | null;
+    contributions: ContributionDetail[] | null; // Detailed contributions per category
 }
 
 
@@ -106,116 +120,39 @@ function chiSquarePValue(statistic: number, df: number): number {
 }
 
 /**
- * Calculates Chi-square statistic for a k x 2 contingency table.
- * table = [[exp1, notExp1], [exp2, notExp2], ..., [expK, notExpK]]
- * Optionally applies Yates' correction element-wise (use cautiously for k>2).
+ * Calculates the contribution of a single category to the overall Chi-square statistic.
+ * Uses only the 'experienced' counts.
+ * contrib_i = (O_i - E_i)^2 / E_i
+ * Handles E_i = 0 case.
  */
-function calculateKx2ChiSquare(
-    groupsData: Array<{
-        experienced: number;
-        notExperienced: number;
-        rowTotal: number;
-        expectedExperienced: number; // Now required
-        expectedNotExperienced: number; // Now required
-    }>,
-    useYates: boolean = false
-): number {
-    let chiSquareStat = 0;
-
-    groupsData.forEach(group => {
-        if (group.rowTotal > 0) {
-            const observedExp = group.experienced;
-            const observedNotExp = group.notExperienced;
-            const expectedExp = group.expectedExperienced;
-            const expectedNotExp = group.expectedNotExperienced;
-
-            // Experienced term
-            if (expectedExp > 0) {
-                const diff = observedExp - expectedExp;
-                const yatesTerm = useYates ? 0.5 : 0;
-                const absDiff = Math.abs(diff);
-                // Prevent negative base for power when diff is small and yates is used
-                const correctedDiff = Math.max(0, absDiff - yatesTerm);
-                chiSquareStat += (correctedDiff ** 2) / expectedExp;
-            } else if (observedExp !== 0) {
-                return Infinity; // Observed count where expected is 0 -> infinite contribution
-            } // else observed is 0, expected is 0, contribution is 0
-
-            // Not Experienced term
-            if (expectedNotExp > 0) {
-                const diff = observedNotExp - expectedNotExp;
-                const yatesTerm = useYates ? 0.5 : 0;
-                const absDiff = Math.abs(diff);
-                // Prevent negative base for power
-                const correctedDiff = Math.max(0, absDiff - yatesTerm);
-                chiSquareStat += (correctedDiff ** 2) / expectedNotExp;
-            } else if (observedNotExp !== 0) {
-                return Infinity; // Observed count where expected is 0 -> infinite contribution
-            } // else observed is 0, expected is 0, contribution is 0
-        }
-    });
-
-     // Handle cases where the loop resulted in Infinity
-     if (!isFinite(chiSquareStat)) {
-        return Infinity;
+function calculateChiSquareContribution(observed: number, expected: number, useYates: boolean = false): number {
+    if (expected === 0) {
+        return observed > 0 ? Infinity : 0; // Infinite contribution if O > 0 and E = 0
     }
+    const diff = observed - expected;
+    const yatesTerm = useYates ? 0.5 : 0;
+    const absDiff = Math.abs(diff);
+    const correctedDiff = Math.max(0, absDiff - yatesTerm); // Prevents negative base for power
 
-    return chiSquareStat;
+    return (correctedDiff ** 2) / expected;
 }
-
 
 /**
- * Calculates the G-Test statistic for a k x 2 contingency table.
- * G = 2 * sum(O * ln(O/E))
+ * Calculates the contribution of a single category to the overall G-Test statistic.
+ * Uses only the 'experienced' counts.
+ * G_contrib_i = 2 * O_i * ln(O_i / E_i)
+ * Handles O_i = 0 or E_i = 0 cases.
  */
-function calculateKx2GTest(
-    groupsData: Array<{
-        experienced: number;
-        notExperienced: number;
-        rowTotal: number;
-        expectedExperienced: number; // Now required
-        expectedNotExperienced: number; // Now required
-     }>
-): number {
-     let gTestStat = 0;
-
-     groupsData.forEach(group => {
-         if (group.rowTotal > 0) {
-             const observedExp = group.experienced;
-             const observedNotExp = group.notExperienced;
-             const expectedExp = group.expectedExperienced;
-             const expectedNotExp = group.expectedNotExperienced;
-
-             // G-Test contribution (handle observed = 0 cases)
-             // Experienced term
-             if (observedExp > 0) {
-                  if (expectedExp > 0) {
-                     gTestStat += observedExp * Math.log(observedExp / expectedExp);
-                  } else {
-                      // Observed > 0 but Expected = 0 -> infinite statistic
-                      return Infinity;
-                  }
-             } // If observed is 0, contribution is 0 * log(0/E) = 0
-
-             // Not Experienced term
-             if (observedNotExp > 0) {
-                 if (expectedNotExp > 0) {
-                     gTestStat += observedNotExp * Math.log(observedNotExp / expectedNotExp);
-                 } else {
-                     // Observed > 0 but Expected = 0 -> infinite statistic
-                     return Infinity;
-                 }
-             } // If observed is 0, contribution is 0
-         }
-     });
-
-     // Check if gTestStat became NaN or Infinity before multiplying
-     if (!isFinite(gTestStat)) {
-        return gTestStat; // Return NaN or Infinity directly
-     }
-
-     return 2 * gTestStat; // Final step for G-Test
+function calculateGTestContribution(observed: number, expected: number): number {
+    if (observed === 0) {
+        return 0; // 0 * ln(0/E) = 0
+    }
+    if (expected === 0) {
+        return Infinity; // O > 0 and E = 0 -> infinite contribution
+    }
+    return 2 * observed * Math.log(observed / expected);
 }
+
 
 /**
  * Calculates Chi-square statistic for a 2x2 contingency table.
@@ -307,11 +244,11 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
     // --- Early Exit if Validation Errors ---
     const initialTotals = {
         grandTotal: 0, totalExperienced: 0, totalNotExperienced: 0,
-        totalExpectedExperienced: 0, totalExpectedNotExperienced: 0
+        totalExpectedExperienced: 0, totalExpectedNotExperienced: 0, totalChiSquareContributions: 0
     };
     const initialSummary: ContingencySummaryData[] = groups.map(g => ({
         ...g, rowTotal: g.experienced + g.notExperienced, percentExperienced: 0,
-        expectedExperienced: 0, expectedNotExperienced: 0
+        expectedExperienced: 0, expectedNotExperienced: 0, chiSquareContribution: null
     }));
 
     if (errors.length > 0) {
@@ -320,7 +257,8 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
             overallStats: null,
             pairwiseResultsMatrix: null,
             totals: initialTotals,
-            errors
+            errors,
+            contributions: null,
         };
     }
 
@@ -331,26 +269,65 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
 
     if (grandTotal === 0) {
          errors.push("Total number of observations is zero.");
-         return { contingencySummary: initialSummary, overallStats: null, pairwiseResultsMatrix: null, totals: initialTotals, errors };
+         return { contingencySummary: initialSummary, overallStats: null, pairwiseResultsMatrix: null, totals: initialTotals, errors, contributions: null };
     }
+
+    // Calculate contributions and summary data
+    let totalChiSquareContributions = 0;
+    const contributionsDetails: ContributionDetail[] = [];
 
     const contingencySummary: ContingencySummaryData[] = groups.map(g => {
         const rowTotal = g.experienced + g.notExperienced;
         let expectedExperienced = 0;
         let expectedNotExperienced = 0;
+        let chiSquareContribution: number | null = null;
+        let yatesContribution: number = NaN;
+        let gTestContribution: number = NaN;
+
+
         if (grandTotal > 0 && rowTotal > 0) {
             expectedExperienced = (rowTotal * totalExperienced) / grandTotal;
             expectedNotExperienced = (rowTotal * totalNotExperienced) / grandTotal;
-        }
 
-        // Check for expected counts < 5 (common warning for Chi-square validity)
-         if (expectedExperienced < 5 || expectedNotExperienced < 5) {
-            // Check if warning already exists for this group
-             const warningMsg = `Warning: Group "${g.name}" has an expected count less than 5. Chi-square approximation may be less accurate.`;
-             if (!errors.includes(warningMsg)) {
-                 errors.push(warningMsg);
+            // Calculate contributions based ONLY on the experienced column (O_i vs E_i)
+            chiSquareContribution = calculateChiSquareContribution(g.experienced, expectedExperienced, false);
+            yatesContribution = calculateChiSquareContribution(g.experienced, expectedExperienced, true);
+            gTestContribution = calculateGTestContribution(g.experienced, expectedExperienced);
+
+             // Add to total contribution sum if valid
+            if (isFinite(chiSquareContribution)) {
+                 totalChiSquareContributions += chiSquareContribution;
+            }
+
+            // Store detailed contributions
+            contributionsDetails.push({
+                category: g.name,
+                observedExperienced: g.experienced,
+                expectedExperienced: expectedExperienced,
+                chiSquareContrib: chiSquareContribution, // Store potentially infinite value
+                yatesContrib: yatesContribution,       // Store potentially infinite value
+                gTestContrib: gTestContribution        // Store potentially infinite value
+            });
+
+            // Check for expected counts < 5 (common warning for Chi-square validity)
+            // Check both experienced and not experienced for general table validity
+             if (expectedExperienced < 5 || expectedNotExperienced < 5) {
+                const warningMsg = `Warning: Group "${g.name}" has an expected count less than 5. Test approximation may be less accurate.`;
+                if (!errors.includes(warningMsg)) {
+                    errors.push(warningMsg);
+                }
              }
-         }
+        } else {
+             // Handle rowTotal = 0 case for contributions
+             contributionsDetails.push({
+                 category: g.name,
+                 observedExperienced: g.experienced,
+                 expectedExperienced: 0,
+                 chiSquareContrib: 0, // No contribution if no data
+                 yatesContrib: 0,
+                 gTestContrib: 0
+             });
+        }
 
 
         return {
@@ -359,6 +336,7 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
             percentExperienced: rowTotal > 0 ? (g.experienced / rowTotal) * 100 : 0,
             expectedExperienced: expectedExperienced,
             expectedNotExperienced: expectedNotExperienced,
+            chiSquareContribution: chiSquareContribution // Store contribution in summary
         };
     });
 
@@ -367,7 +345,8 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
 
     const finalTotals = {
         grandTotal, totalExperienced, totalNotExperienced,
-        totalExpectedExperienced, totalExpectedNotExperienced
+        totalExpectedExperienced, totalExpectedNotExperienced,
+        totalChiSquareContributions // Add sum of chi-square contributions
     };
 
 
@@ -381,42 +360,49 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
     // --- Phase 2: Calculate Overall Test Statistics ---
     let overallStats: OverallTestStats | null = null;
     try {
-        // Ensure df is at least 1 for p-value calculation if numGroups >= 2
+        // Correct degrees of freedom: df = k - 1 for k categories
         const degreesOfFreedom = Math.max(1, numGroups - 1);
-        // Only calculate comparisons if numGroups >= 2
         const numComparisons = numGroups >= 2 ? numGroups * (numGroups - 1) / 2 : 0;
 
-        // Calculate overall Chi-square (Pearson)
-        const overallChiSquareStat = calculateKx2ChiSquare(contingencySummary, false);
-        const chiSquareP = chiSquarePValue(overallChiSquareStat, degreesOfFreedom);
+        // Overall Chi-square (Pearson) - Sum of contributions from experienced column
+        const overallChiSquareStat = contributionsDetails.reduce((sum, c) => sum + (isFinite(c.chiSquareContrib) ? c.chiSquareContrib : 0), 0);
+        // Handle potential Infinity if any contribution was Infinity
+        if (contributionsDetails.some(c => !isFinite(c.chiSquareContrib) && c.chiSquareContrib > 0)) {
+             overallStats = {
+                 limitAlpha: alpha, degreesOfFreedom, numComparisons,
+                 chiSquare: { statistic: Infinity, pValue: 0 },
+                 chiSquareYates: { statistic: Infinity, pValue: 0 }, // Assume Yates also infinite
+                 gTest: { statistic: Infinity, pValue: 0 } // Assume G-test also infinite
+             };
+        } else {
+             const chiSquareP = chiSquarePValue(overallChiSquareStat, degreesOfFreedom);
 
-        // Calculate overall Chi-square with Yates' correction
-        // Note: Applying Yates element-wise for k>2 is debated. We implement as requested.
-        const overallChiSquareYatesStat = calculateKx2ChiSquare(contingencySummary, true);
-        const chiSquareYatesP = chiSquarePValue(overallChiSquareYatesStat, degreesOfFreedom);
+             // Overall Chi-square with Yates' correction - Sum of Yates contributions
+             const overallChiSquareYatesStat = contributionsDetails.reduce((sum, c) => sum + (isFinite(c.yatesContrib) ? c.yatesContrib : 0), 0);
+             const chiSquareYatesP = chiSquarePValue(overallChiSquareYatesStat, degreesOfFreedom);
 
+             // Overall G-Test - Sum of G-Test contributions
+             const overallGTestStat = contributionsDetails.reduce((sum, c) => sum + (isFinite(c.gTestContrib) ? c.gTestContrib : 0), 0);
+             const gTestP = chiSquarePValue(overallGTestStat, degreesOfFreedom);
 
-        // Calculate overall G-Test
-        const overallGTestStat = calculateKx2GTest(contingencySummary);
-        const gTestP = chiSquarePValue(overallGTestStat, degreesOfFreedom);
-
-        overallStats = {
-            limitAlpha: alpha,
-            degreesOfFreedom,
-            numComparisons,
-            chiSquare: {
-                statistic: overallChiSquareStat,
-                pValue: chiSquareP,
-            },
-             chiSquareYates: { // Include Yates results
-                statistic: overallChiSquareYatesStat,
-                pValue: chiSquareYatesP,
-            },
-            gTest: {
-                statistic: overallGTestStat,
-                pValue: gTestP,
-            },
-        };
+             overallStats = {
+                 limitAlpha: alpha,
+                 degreesOfFreedom,
+                 numComparisons,
+                 chiSquare: {
+                     statistic: overallChiSquareStat,
+                     pValue: chiSquareP,
+                 },
+                 chiSquareYates: {
+                     statistic: overallChiSquareYatesStat,
+                     pValue: chiSquareYatesP,
+                 },
+                 gTest: {
+                     statistic: overallGTestStat,
+                     pValue: gTestP,
+                 },
+             };
+         }
 
     } catch (e: any) {
         console.error("Error calculating overall stats:", e);
@@ -512,7 +498,8 @@ export function performMultiComparisonReport(inputs: MultiComparisonInputs): Mul
         overallStats,
         pairwiseResultsMatrix,
         totals: finalTotals,
-        errors
+        errors,
+        contributions: contributionsDetails, // Include detailed contributions
     };
 }
 
@@ -545,6 +532,11 @@ export function formatScientific(value: number | null | undefined, significantDi
          if (!parts[1].startsWith('+') && !parts[1].startsWith('-')) {
             const sign = exponent >= 0 ? '+' : ''; // Add '+' only if non-negative AND sign missing
             exponentialString = `${parts[0]}E${sign}${exponent}`;
+         } else {
+            // Ensure '+' sign is present for non-negative exponents if split correctly gave sign
+            if (exponent >= 0 && !parts[1].startsWith('+')) {
+                 exponentialString = `${parts[0]}E+${exponent}`;
+            }
          }
      }
 

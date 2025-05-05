@@ -74,6 +74,7 @@ export function exportToCSV(
       "% Experienced",
       "Expected: # Did NOT Experience",
       "Expected: # Experienced",
+      "Chi-Sq Contribution", // Added header
     ];
     csvRows.push(summaryHeaders.join(','));
 
@@ -86,6 +87,7 @@ export function exportToCSV(
         escapeCSV(formatPercent(row.percentExperienced)), // Use formatter
         escapeCSV(formatDecimal(row.expectedNotExperienced, 1)), // Use formatter
         escapeCSV(formatDecimal(row.expectedExperienced, 1)), // Use formatter
+        escapeCSV(formatDecimal(row.chiSquareContribution, 3)), // Add formatted contribution
       ];
       csvRows.push(values.join(','));
     });
@@ -100,6 +102,7 @@ export function exportToCSV(
         escapeCSV(totals.grandTotal > 0 ? formatPercent((totals.totalExperienced / totals.grandTotal) * 100) : 'N/A'),
         escapeCSV(formatDecimal(totals.totalExpectedNotExperienced, 1)),
         escapeCSV(formatDecimal(totals.totalExpectedExperienced, 1)),
+        escapeCSV(formatDecimal(totals.totalChiSquareContributions, 3)), // Add total contribution
      ];
      csvRows.push(totalRow.join(','));
 
@@ -127,7 +130,7 @@ export function exportToCSV(
      // Helper for interpretation string
      const getInterpretation = (pValue: number | null | undefined, threshold: number) => {
         if (pValue === null || pValue === undefined || isNaN(pValue)) return "N/A";
-        return pValue < threshold ? "Statistically different. Potential racial disparity; pursue further investigation." : "Not statistically different.";
+        return pValue < threshold ? "Statistically different. Potential disparity; pursue further investigation." : "Not statistically different.";
      };
 
     // Chi-square
@@ -166,7 +169,7 @@ export function exportToCSV(
         // Format p-value or indicate self/error
         let formattedPValue = "N/A"; // Default for errors or invalid
         if (rowName === colName) {
-             formattedPValue = "1.000E+0"; // Or "-" or "" for diagonal
+             formattedPValue = "-"; // Use dash for diagonal
         } else if (pValue !== null && !isNaN(pValue as number)) {
              formattedPValue = formatScientific(pValue as number, 3); // Use 3 sig digits
         }
