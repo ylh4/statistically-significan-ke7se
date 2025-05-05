@@ -47,16 +47,17 @@ export function exportToCSV(
   // --- Results Section ---
   csvRows.push("Calculation Results"); // Section header
    // Define CSV headers based on the updated table display
+   const ciLevel = (1 - inputData.alpha) * 100;
   const resultsHeaders = [
-    "Comparison Group", // Changed Header
-    "Proportion (p)", // Simplified Header
+    "Comparison Group",
+    "Proportion (p)",
     "Difference (δ)",
     "Std. Error (SE)",
     "Z-Statistic",
-    "Lower CI", // Keep separate for CSV clarity
-    "Upper CI", // Keep separate for CSV clarity
-    "Statistically Significant?", // Consistent header
-    "Notes" // Consistent header (for errors)
+    `${ciLevel}% CI Lower`, // Dynamic CI header part
+    `${ciLevel}% CI Upper`, // Dynamic CI header part
+    "Statistically Significant?",
+    "Notes"
   ];
   csvRows.push(resultsHeaders.join(',')); // Header row for results
 
@@ -98,7 +99,7 @@ export function exportToCSV(
   const csvString = csvRows.join('\n');
 
   // Create a Blob and trigger download
-  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob([`\uFEFF${csvString}`], { type: 'text/csv;charset=utf-8;' }); // Add BOM for Excel compatibility
   const link = document.createElement('a');
   if (link.download !== undefined) { // Feature detection
     const url = URL.createObjectURL(blob);

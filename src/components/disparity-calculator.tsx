@@ -2,10 +2,12 @@
 "use client";
 
 import type { ChangeEvent, FormEvent } from 'react';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useFieldArray, useForm, Controller } from "react-hook-form";
 import { z } from "zod";
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,8 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, CheckCircle, XCircle, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
-import { calculateDisparity, type CalculationResult, type Category, invNormCDF } from "@/lib/calculations"; // Import invNormCDF
+import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, CheckCircle, XCircle, ArrowUpCircle, ArrowDownCircle, FileDown } from 'lucide-react';
+import { calculateDisparity, type CalculationResult, type Category, invNormCDF } from "@/lib/calculations";
 import { exportToCSV } from '@/lib/utils';
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -63,6 +65,7 @@ export default function DisparityCalculator() {
   const [results, setResults] = useState<CalculationResult[]>([]);
   const [calculationError, setCalculationError] = useState<string | null>(null);
   const [referenceProportion, setReferenceProportion] = useState<number | null>(null);
+  const reportRef = useRef<HTMLDivElement>(null); // Ref for the element to capture
 
 
    const form = useForm<FormValues>({
@@ -238,6 +241,78 @@ export default function DisparityCalculator() {
     }
   };
 
+  const handleExportPDF = async () => {
+      if (!reportRef.current) {
+           toast({
+                title: "PDF Export Failed",
+                description: "Report element not found.",
+                variant: "destructive",
+           });
+          return;
+      }
+       if (results.length === 0 && !calculationError) {
+            toast({
+                 title: "PDF Export Failed",
+                 description: "No results available to export.",
+                 variant: "destructive",
+            });
+           return;
+       }
+
+       toast({
+           title: "Generating PDF...",
+           description: "Please wait while the report is being generated.",
+       });
+
+    try {
+        // Ensure the content is fully rendered before capturing
+         await new Promise(resolve => setTimeout(resolve, 100)); // Small delay for rendering
+
+        const canvas = await html2canvas(reportRef.current, {
+             scale: 2, // Increase scale for better quality
+             useCORS: true, // Handle external resources if any
+             logging: true, // Enable logging for debugging
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({
+            orientation: 'p', // portrait
+            unit: 'pt', // points
+            format: 'a4' // A4 paper size
+        });
+
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imgWidth = canvas.width;
+        const imgHeight = canvas.height;
+
+         // Calculate the aspect ratio
+         const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+
+         // Calculate the dimensions of the image in the PDF
+         const imgX = (pdfWidth - imgWidth * ratio) / 2; // Center the image horizontally
+         const imgY = 10; // Add some margin from the top
+
+        pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+
+        const formValues = form.getValues();
+        const filename = `disparity-report_${formValues.referenceCategoryName || 'data'}.pdf`;
+        pdf.save(filename);
+
+        toast({
+            title: "PDF Export Successful",
+            description: `Report saved as ${filename}`,
+        });
+
+    } catch (error: any) {
+        console.error("PDF Export failed:", error);
+        toast({
+            title: "PDF Export Failed",
+            description: `Could not export report to PDF: ${error.message || 'Unknown error'}`,
+            variant: "destructive",
+        });
+    }
+  };
+
 
   // Format numbers, handling NaN and Infinity
   const formatNumber = (num: number | undefined | null, decimals: number = 4): string => {
@@ -252,263 +327,301 @@ export default function DisparityCalculator() {
 
 
   return (
-    <Card className="w-full max-w-5xl mx-auto shadow-lg"> {/* Increased max-width */}
-       <Toaster />
-      <CardHeader>
-        <CardTitle className="text-2xl text-secondary-foreground">Input Parameters</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* N and Alpha Inputs */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <div className="space-y-2">
-              <Label htmlFor="N">Total Sample Size (N)</Label>
-              <Input
-                id="N"
-                type="number"
-                min="30" // Keep browser min for usability, Zod enforces >= 30
-                step="1"
-                {...form.register("N")}
-                className={cn(form.formState.errors.N ? "border-destructive" : "")}
-              />
-              {form.formState.errors.N && <p className="text-sm text-destructive">{form.formState.errors.N.message}</p>}
-            </div>
-             <div className="space-y-2">
-              <Label htmlFor="alpha">Significance Level (α)</Label>
-               <Controller
-                  control={form.control}
-                  name="alpha"
-                  render={({ field: { onChange, onBlur, value, ref } }) => (
-                     <Input
-                       id="alpha"
-                       type="number"
-                       step="0.001" // Allow finer steps
-                       min="0.0001"
-                       max="0.9999"
-                       value={value ?? ''} // Ensure value is not undefined/null for input
-                       onChange={(e) => {
-                          const numVal = e.target.value === '' ? null : parseFloat(e.target.value);
-                           onChange(numVal); // Pass null or number to react-hook-form
-                       }}
-                       onBlur={onBlur}
-                       ref={ref}
-                       className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
-                     />
-                  )}
-               />
-               {form.formState.errors.alpha && <p className="text-sm text-destructive">{form.formState.errors.alpha.message}</p>}
-            </div>
-          </div>
-
-          {/* Categories Section */}
-          <div className="space-y-4">
-            <Label className="text-lg font-medium text-secondary-foreground">Categories</Label>
-            {fields.map((field, index) => (
-              <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card">
-                <div className="flex-1 grid grid-cols-2 gap-2">
-                     <div className="space-y-1">
-                       <Label htmlFor={`categories.${index}.name`}>Name</Label>
-                        <Input
-                        id={`categories.${index}.name`}
-                        {...form.register(`categories.${index}.name`)}
-                         className={cn(form.formState.errors.categories?.[index]?.name ? "border-destructive" : "")}
-                        />
-                         {form.formState.errors.categories?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.categories?.[index]?.name?.message}</p>}
-                     </div>
-                     <div className="space-y-1">
-                        <Label htmlFor={`categories.${index}.count`}>Count</Label>
-                        <Input
-                        id={`categories.${index}.count`}
-                        type="number"
-                        min="0" // Keep non-negative constraint
-                        step="1"
-                        {...form.register(`categories.${index}.count`)}
-                        className={cn(form.formState.errors.categories?.[index]?.count ? "border-destructive" : "")}
-                        />
-                        {form.formState.errors.categories?.[index]?.count && <p className="text-sm text-destructive">{form.formState.errors.categories?.[index]?.count?.message}</p>}
-                     </div>
+    <div ref={reportRef}> {/* Wrap the entire component content in the ref */}
+        <Card className="w-full max-w-5xl mx-auto shadow-lg"> {/* Increased max-width */}
+           <Toaster />
+          <CardHeader>
+            <CardTitle className="text-2xl text-secondary-foreground">Input Parameters</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              {/* N and Alpha Inputs */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                  <Label htmlFor="N">Total Sample Size (N)</Label>
+                  <Input
+                    id="N"
+                    type="number"
+                    min="30" // Keep browser min for usability, Zod enforces >= 30
+                    step="1"
+                    {...form.register("N")}
+                    className={cn(form.formState.errors.N ? "border-destructive" : "")}
+                  />
+                  {form.formState.errors.N && <p className="text-sm text-destructive">{form.formState.errors.N.message}</p>}
                 </div>
+                 <div className="space-y-2">
+                  <Label htmlFor="alpha">Significance Level (α)</Label>
+                   <Controller
+                      control={form.control}
+                      name="alpha"
+                      render={({ field: { onChange, onBlur, value, ref } }) => (
+                         <Input
+                           id="alpha"
+                           type="number"
+                           step="0.0001" // Allow finer steps
+                           min="0.0001"
+                           max="0.9999"
+                           value={value ?? ''} // Ensure value is not undefined/null for input
+                           onChange={(e) => {
+                              const rawValue = e.target.value;
+                              // Allow empty string to clear the input
+                              if (rawValue === '') {
+                                  onChange(null); // Pass null to react-hook-form
+                              } else {
+                                  const numVal = parseFloat(rawValue);
+                                  // Only pass valid numbers or potentially intermediate invalid states for Zod to handle
+                                   if (!isNaN(numVal) || rawValue === '.' || rawValue.endsWith('.')) {
+                                       onChange(rawValue); // Pass string for intermediate states like "0."
+                                   } else if (isNaN(numVal)){
+                                       onChange(null); // Reset if truly invalid input
+                                   }
+                              }
+                           }}
+                           onBlur={(e) => {
+                               // On blur, ensure the value passed to RHF is a valid number or null
+                               const rawValue = e.target.value;
+                               if (rawValue === '') {
+                                   onChange(null);
+                               } else {
+                                   const numVal = parseFloat(rawValue);
+                                    if (!isNaN(numVal)) {
+                                       // Clamp value on blur if outside strict bounds, although Zod handles this primarily
+                                       const clampedVal = Math.max(0.0001, Math.min(0.9999, numVal));
+                                       onChange(clampedVal);
+                                   } else {
+                                       // If still invalid on blur (e.g., just a '.'), treat as error/reset
+                                       onChange(null); // Or trigger validation re-run if needed
+                                       form.trigger("alpha"); // Explicitly trigger validation
+                                   }
+                               }
+                               onBlur(); // Call original onBlur handler
+                           }}
+                           ref={ref}
+                           className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
+                         />
+                      )}
+                   />
+                   {form.formState.errors.alpha && <p className="text-sm text-destructive">{form.formState.errors.alpha.message}</p>}
+                </div>
+              </div>
+
+              {/* Categories Section */}
+              <div className="space-y-4">
+                <Label className="text-lg font-medium text-secondary-foreground">Categories</Label>
+                {fields.map((field, index) => (
+                  <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card">
+                    <div className="flex-1 grid grid-cols-2 gap-2">
+                         <div className="space-y-1">
+                           <Label htmlFor={`categories.${index}.name`}>Name</Label>
+                            <Input
+                            id={`categories.${index}.name`}
+                            {...form.register(`categories.${index}.name`)}
+                             className={cn(form.formState.errors.categories?.[index]?.name ? "border-destructive" : "")}
+                            />
+                             {form.formState.errors.categories?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.categories?.[index]?.name?.message}</p>}
+                         </div>
+                         <div className="space-y-1">
+                            <Label htmlFor={`categories.${index}.count`}>Count</Label>
+                            <Input
+                            id={`categories.${index}.count`}
+                            type="number"
+                            min="0" // Keep non-negative constraint
+                            step="1"
+                            {...form.register(`categories.${index}.count`)}
+                            className={cn(form.formState.errors.categories?.[index]?.count ? "border-destructive" : "")}
+                            />
+                            {form.formState.errors.categories?.[index]?.count && <p className="text-sm text-destructive">{form.formState.errors.categories?.[index]?.count?.message}</p>}
+                         </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => remove(index)}
+                      disabled={fields.length <= 2}
+                      className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
+                      aria-label="Remove category"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => remove(index)}
-                  disabled={fields.length <= 2}
-                  className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
-                  aria-label="Remove category"
+                  variant="outline"
+                  onClick={() => append({ name: `Group ${String.fromCharCode(65 + fields.length)}`, count: 0 })}
+                  className="mt-2"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <PlusCircle className="mr-2 h-4 w-4" /> Add Category
+                </Button>
+
+                 {/* Validation message for sum of counts */}
+                  {!countMatchesN && watchCategories.length > 0 && nValue > 0 && (
+                     <p className="text-sm text-destructive">
+                        Sum of counts ({currentTotalCount}) does not match Total Sample Size ({nValue || 'N/A'}).
+                     </p>
+                  )}
+                  {/* Display root level error if refine fails */}
+                 {form.formState.errors.categories?.root && <p className="text-sm text-destructive">{form.formState.errors.categories.root.message}</p>}
+                 {/* Display general message if not attached to root */}
+                 {form.formState.errors.categories && typeof form.formState.errors.categories.message === 'string' && !form.formState.errors.categories.root && <p className="text-sm text-destructive">{form.formState.errors.categories.message}</p>}
+
+
+              </div>
+
+                {/* Reference Category Selection */}
+                <div className="space-y-2">
+                    <Label htmlFor="referenceCategoryName">Reference Category</Label>
+                     <Controller
+                        control={form.control}
+                        name="referenceCategoryName"
+                        render={({ field }) => (
+                            <Select onValueChange={field.onChange} value={field.value} >
+                                <SelectTrigger id="referenceCategoryName" className={cn(form.formState.errors.referenceCategoryName ? "border-destructive" : "")}>
+                                    <SelectValue placeholder="Select reference category" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {categoryOptions.map(name => (
+                                    <SelectItem key={name} value={name} disabled={name.trim() === ''}>
+                                        {name || '(Empty Name)'}
+                                    </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                         )}
+                        />
+                     {form.formState.errors.referenceCategoryName && <p className="text-sm text-destructive">{form.formState.errors.referenceCategoryName.message}</p>}
+                </div>
+
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row justify-end gap-4 pt-4">
+                 <Button type="button" variant="outline" onClick={handleReset}>
+                  <RotateCcw className="mr-2 h-4 w-4" /> Reset Form
+                </Button>
+                <Button type="submit" disabled={!form.formState.isValid} className="bg-primary hover:bg-accent text-primary-foreground">
+                  Calculate Disparity
                 </Button>
               </div>
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => append({ name: `Group ${String.fromCharCode(65 + fields.length)}`, count: 0 })}
-              className="mt-2"
-            >
-              <PlusCircle className="mr-2 h-4 w-4" /> Add Category
-            </Button>
+            </form>
+          </CardContent>
 
-             {/* Validation message for sum of counts */}
-              {!countMatchesN && watchCategories.length > 0 && nValue > 0 && (
-                 <p className="text-sm text-destructive">
-                    Sum of counts ({currentTotalCount}) does not match Total Sample Size ({nValue || 'N/A'}).
-                 </p>
+          {/* Results Section */}
+          {(results.length > 0 || calculationError) && (
+            <CardFooter className="flex-col items-start gap-4 pt-6 border-t">
+               <div className="flex justify-between w-full items-center mb-4">
+                 <div className='flex flex-col sm:flex-row sm:items-center gap-x-4'>
+                     <h2 className="text-xl font-semibold text-secondary-foreground">Results</h2>
+                     <span className="text-sm text-muted-foreground">
+                        (Reference: {watchReference || 'N/A'} {referenceProportion !== null ? `[p = ${formatNumber(referenceProportion)}]` : ''}, α = {formatNumber(watchAlpha)}, Critical Z = ±{criticalZ})
+                     </span>
+                 </div>
+                  <div className="flex gap-2 ml-auto">
+                     <Button
+                           type="button"
+                           variant="outline"
+                           onClick={handleExport}
+                           disabled={results.length === 0 && !calculationError} // Enable export even if only errors exist
+                       >
+                           <Download className="mr-2 h-4 w-4" /> Export CSV
+                     </Button>
+                     <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleExportPDF}
+                            disabled={results.length === 0 && !calculationError} // Enable export even if only errors exist
+                     >
+                            <FileDown className="mr-2 h-4 w-4" /> Export PDF
+                      </Button>
+                 </div>
+               </div>
+
+              {calculationError && (
+                <Alert variant="destructive" className="w-full mb-4">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Calculation Error</AlertTitle>
+                  <AlertDescription>{calculationError}</AlertDescription>
+                </Alert>
               )}
-              {/* Display root level error if refine fails */}
-             {form.formState.errors.categories?.root && <p className="text-sm text-destructive">{form.formState.errors.categories.root.message}</p>}
-             {/* Display general message if not attached to root */}
-             {form.formState.errors.categories && typeof form.formState.errors.categories.message === 'string' && !form.formState.errors.categories.root && <p className="text-sm text-destructive">{form.formState.errors.categories.message}</p>}
 
-
-          </div>
-
-            {/* Reference Category Selection */}
-            <div className="space-y-2">
-                <Label htmlFor="referenceCategoryName">Reference Category</Label>
-                 <Controller
-                    control={form.control}
-                    name="referenceCategoryName"
-                    render={({ field }) => (
-                        <Select onValueChange={field.onChange} value={field.value} >
-                            <SelectTrigger id="referenceCategoryName" className={cn(form.formState.errors.referenceCategoryName ? "border-destructive" : "")}>
-                                <SelectValue placeholder="Select reference category" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {categoryOptions.map(name => (
-                                <SelectItem key={name} value={name} disabled={name.trim() === ''}>
-                                    {name || '(Empty Name)'}
-                                </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                     )}
-                    />
-                 {form.formState.errors.referenceCategoryName && <p className="text-sm text-destructive">{form.formState.errors.referenceCategoryName.message}</p>}
-            </div>
-
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row justify-end gap-4 pt-4">
-             <Button type="button" variant="outline" onClick={handleReset}>
-              <RotateCcw className="mr-2 h-4 w-4" /> Reset Form
-            </Button>
-            <Button type="submit" disabled={!form.formState.isValid} className="bg-primary hover:bg-accent text-primary-foreground">
-              Calculate Disparity
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-
-      {/* Results Section */}
-      {(results.length > 0 || calculationError) && (
-        <CardFooter className="flex-col items-start gap-4 pt-6 border-t">
-           <div className="flex justify-between w-full items-center mb-4">
-             <div className='flex flex-col sm:flex-row sm:items-center gap-x-4'>
-                 <h2 className="text-xl font-semibold text-secondary-foreground">Results</h2>
-                 <span className="text-sm text-muted-foreground">
-                    (Reference: {watchReference || 'N/A'} {referenceProportion !== null ? `[p = ${formatNumber(referenceProportion)}]` : ''}, α = {formatNumber(watchAlpha)}, Critical Z = ±{criticalZ})
-                 </span>
-             </div>
-              <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleExport}
-                    disabled={results.length === 0 && !calculationError} // Enable export even if only errors exist
-                    className="ml-auto"
-                >
-                    <Download className="mr-2 h-4 w-4" /> Export CSV
-              </Button>
-           </div>
-
-          {calculationError && (
-            <Alert variant="destructive" className="w-full mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Calculation Error</AlertTitle>
-              <AlertDescription>{calculationError}</AlertDescription>
-            </Alert>
+              {results.length > 0 && (
+                <div className="w-full overflow-x-auto">
+                  <Table>
+                    <TableHeader className="bg-secondary">
+                      <TableRow>
+                        <TableHead>Comparison Group</TableHead> {/* Changed Header */}
+                        <TableHead className="text-right">Proportion (p)</TableHead> {/* Simplified Header */}
+                        <TableHead className="text-right">Difference (δ)</TableHead>
+                        <TableHead className="text-right">Std. Error (SE)</TableHead>
+                        <TableHead className="text-right">Z-Statistic</TableHead>
+                        <TableHead className="text-right">{`${(1 - watchAlpha) * 100}% Confidence Interval (CI)`}</TableHead> {/* Dynamic CI Header */}
+                        <TableHead className="text-center">Statistically Significant?</TableHead>
+                        <TableHead>Notes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                       {/* Display Comparison Category Rows */}
+                      {results.map((result) => (
+                        <TableRow
+                          key={result.categoryName}
+                           className={cn(
+                              result.error && "bg-destructive/10", // Light red background ONLY for error rows
+                               !result.error && result.isSignificant && "bg-muted/40", // Neutral muted background for significant rows
+                               !result.error && !result.isSignificant && "hover:bg-muted/50" // Standard hover for non-significant non-error rows
+                           )}
+                        >
+                          <TableCell className="font-medium">{result.categoryName}</TableCell>
+                          <TableCell className="text-right">{formatNumber(result.pi)}</TableCell>
+                          <TableCell className={cn("text-right",
+                             result.isSignificant && "font-semibold", // Bold significant differences
+                             result.isSignificant && result.delta > 0 && "text-destructive", // Red for positive significant diff
+                             result.isSignificant && result.delta < 0 && "text-significant-blue" // Blue for negative significant diff
+                           )}>
+                             {formatNumber(result.delta)}
+                          </TableCell>
+                          <TableCell className="text-right">{formatNumber(result.SE)}</TableCell>
+                          <TableCell className={cn("text-right",
+                             result.isSignificant && "font-semibold" // Bold significant Z-stats
+                           )}>
+                            {formatNumber(result.zStat)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                               {/* Combined CI */}
+                                {result.error ? 'N/A' : `[${formatNumber(result.ciLow)}, ${formatNumber(result.ciHigh)}]`}
+                          </TableCell>
+                           <TableCell className="text-center">
+                              {result.error ? (
+                                  <span className="text-destructive font-medium flex items-center justify-center">
+                                     <XCircle className="mr-1 h-4 w-4" /> Error
+                                  </span>
+                              ) : result.isSignificant ? (
+                                   <span className={cn("font-medium flex items-center justify-center",
+                                      result.delta > 0 ? "text-destructive" : "text-significant-blue"
+                                   )}>
+                                      {result.delta > 0
+                                         ? <ArrowUpCircle className="mr-1 h-4 w-4" />
+                                         : <ArrowDownCircle className="mr-1 h-4 w-4" />
+                                      }
+                                      Yes
+                                   </span>
+                              ) : (
+                                 <span className="text-muted-foreground flex items-center justify-center">
+                                   <CheckCircle className="mr-1 h-4 w-4 text-green-600" /> No
+                                 </span>
+                              )}
+                           </TableCell>
+                          <TableCell className="text-xs text-destructive"> {/* Ensure error text is visible */}
+                            {result.error ? result.error : ''}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardFooter>
           )}
-
-          {results.length > 0 && (
-            <div className="w-full overflow-x-auto">
-              <Table>
-                <TableHeader className="bg-secondary">
-                  <TableRow>
-                    <TableHead>Comparison Group</TableHead> {/* Changed Header */}
-                    <TableHead className="text-right">Proportion (p)</TableHead> {/* Simplified Header */}
-                    <TableHead className="text-right">Difference (δ)</TableHead>
-                    <TableHead className="text-right">Std. Error (SE)</TableHead>
-                    <TableHead className="text-right">Z-Statistic</TableHead>
-                    <TableHead className="text-right">Confidence Interval (CI)</TableHead> {/* Combined CI */}
-                    <TableHead className="text-center">Statistically Significant?</TableHead>
-                    <TableHead>Notes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                   {/* Reference Category Row - REMOVED */}
-
-                  {/* Display Comparison Category Rows */}
-                  {results.map((result) => (
-                    <TableRow
-                      key={result.categoryName}
-                       className={cn(
-                          result.error && "bg-destructive/10", // Light red background ONLY for error rows
-                           !result.error && result.isSignificant && "bg-muted/40", // Neutral muted background for significant rows
-                           !result.error && !result.isSignificant && "hover:bg-muted/50" // Standard hover for non-significant non-error rows
-                       )}
-                    >
-                      <TableCell className="font-medium">{result.categoryName}</TableCell>
-                      <TableCell className="text-right">{formatNumber(result.pi)}</TableCell>
-                      <TableCell className={cn("text-right",
-                         result.isSignificant && "font-semibold", // Bold significant differences
-                         result.isSignificant && result.delta > 0 && "text-destructive", // Red for positive significant diff
-                         result.isSignificant && result.delta < 0 && "text-significant-blue" // Blue for negative significant diff
-                       )}>
-                         {formatNumber(result.delta)}
-                      </TableCell>
-                      <TableCell className="text-right">{formatNumber(result.SE)}</TableCell>
-                      <TableCell className={cn("text-right",
-                         result.isSignificant && "font-semibold" // Bold significant Z-stats
-                       )}>
-                        {formatNumber(result.zStat)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                           {/* Combined CI */}
-                            {result.error ? 'N/A' : `[${formatNumber(result.ciLow)}, ${formatNumber(result.ciHigh)}]`}
-                      </TableCell>
-                       <TableCell className="text-center">
-                          {result.error ? (
-                              <span className="text-destructive font-medium flex items-center justify-center">
-                                 <XCircle className="mr-1 h-4 w-4" /> Error
-                              </span>
-                          ) : result.isSignificant ? (
-                               <span className={cn("font-medium flex items-center justify-center",
-                                  result.delta > 0 ? "text-destructive" : "text-significant-blue"
-                               )}>
-                                  {result.delta > 0
-                                     ? <ArrowUpCircle className="mr-1 h-4 w-4" />
-                                     : <ArrowDownCircle className="mr-1 h-4 w-4" />
-                                  }
-                                  Yes
-                               </span>
-                          ) : (
-                             <span className="text-muted-foreground flex items-center justify-center">
-                               <CheckCircle className="mr-1 h-4 w-4 text-green-600" /> No
-                             </span>
-                          )}
-                       </TableCell>
-                      <TableCell className="text-xs text-destructive"> {/* Ensure error text is visible */}
-                        {result.error ? result.error : ''}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardFooter>
-      )}
-    </Card>
+        </Card>
+    </div> // End of reportRef div
   );
 }
