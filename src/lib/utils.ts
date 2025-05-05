@@ -1,7 +1,20 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { MultiComparisonResults, MultiComparisonInputs } from "./calculations"; // Import necessary types
+import type { MultiComparisonResults } from "./calculations"; // Import necessary types
 import { formatScientific, formatDecimal, formatPercent } from "./calculations"; // Import formatters
+import type { FormValues as LocalFormValues } from "@/components/disparity-calculator"; // Import local type if needed for comparison or ensure consistency
+
+// Define the type expected by exportToCSV if it differs from the local FormValues
+// If they are the same, you can potentially remove this and use the imported LocalFormValues directly.
+export interface ExportFormValues {
+  alpha: number;
+  groups: {
+    name: string;
+    experienced: number;
+    notExperienced: number;
+  }[];
+  referenceCategories: string[];
+}
 
 
 export function cn(...inputs: ClassValue[]) {
@@ -24,7 +37,7 @@ function escapeCSV(field: string | number | null | undefined): string {
 // Updated function to convert MultiComparisonResults to CSV string and trigger download
 export function exportToCSV(
     reportData: MultiComparisonResults | null, // Expects the full report object
-    inputData: FormValues, // Use FormValues type from disparity-calculator
+    inputData: ExportFormValues, // Use the renamed or specific type for export data
     filename: string = 'statistical-report.csv'
 ) {
   if (!reportData) {
@@ -81,6 +94,13 @@ export function exportToCSV(
     csvRows.push(`Limit (Significance Level α),${escapeCSV(formatDecimal(stats.limitAlpha, 4))}`);
     csvRows.push(`Degrees of Freedom,${escapeCSV(stats.degreesOfFreedom)}`);
     csvRows.push(`# of Pairwise Comparisons,${escapeCSV(stats.numComparisons)}`);
+     // Add Bonferroni Corrected Alpha
+     if (stats.numComparisons > 0) {
+        const correctedAlpha = stats.limitAlpha / stats.numComparisons;
+        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
+     } else {
+        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),N/A`);
+     }
     csvRows.push(""); // separator
 
     // Chi-square
@@ -103,8 +123,9 @@ export function exportToCSV(
   if (reportData.pairwiseResultsMatrix && groupNames.length > 0 && reportData.overallStats) {
     csvRows.push("P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction");
      const correctedAlpha = reportData.overallStats.limitAlpha / reportData.overallStats.numComparisons;
-     csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
-     csvRows.push(""); // Blank row
+     // Redundant row removed - already included above
+     // csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
+     // csvRows.push(""); // Blank row
 
 
     // Matrix Header Row
@@ -186,22 +207,20 @@ export function exportToCSV(
   }
 }
 
-// Re-declare types needed within this file if not imported implicitly or explicitly elsewhere
-// (This might be needed depending on your TS config and how types flow)
-interface GroupInput {
-  name: string;
-  experienced: number;
-  notExperienced: number;
-}
+// Commenting out re-declarations as they should be handled by imports now
+// interface GroupInput {
+//   name: string;
+//   experienced: number;
+//   notExperienced: number;
+// }
 
-interface FormValues {
-  alpha: number;
-  groups: GroupInput[];
-  referenceCategories: string[]; // Ensure this is defined
-}
+// interface FormValues {
+//   alpha: number;
+//   groups: GroupInput[];
+//   referenceCategories: string[]; // Ensure this is defined
+// }
 
 // Assuming formatters are imported or defined in calculations.ts and exported
 // declare function formatScientific(value: number | null | undefined, significantDigits?: number): string;
 // declare function formatDecimal(value: number | null | undefined, decimalPlaces?: number): string;
 // declare function formatPercent(value: number | null | undefined, decimalPlaces?: number): string;
-

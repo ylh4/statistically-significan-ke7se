@@ -31,7 +31,7 @@ import {
     formatDecimal,
     formatPercent
 } from "@/lib/calculations";
-import { exportToCSV } from '@/lib/utils';
+import { exportToCSV, type FormValues as ExportFormValues } from '@/lib/utils'; // Corrected import type name
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
@@ -68,7 +68,8 @@ const formSchema = z.object({
 });
 
 
-type FormValues = z.infer<typeof formSchema>;
+// Explicitly define FormValues based on the schema
+export type FormValues = z.infer<typeof formSchema>;
 
 
 // --- Component ---
@@ -113,7 +114,21 @@ export default function DisparityCalculator() {
 
   // Handler for Alpha input change
   const handleAlphaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      form.setValue('alpha', e.target.value as any, { shouldValidate: true });
+      const value = e.target.value;
+      // Allow empty input temporary, validation handles the rest
+      if (value === '') {
+         form.setValue('alpha', '' as any, { shouldValidate: true });
+      } else {
+          const numValue = parseFloat(value);
+          // Only set if it's a potentially valid number, let zod handle range
+          if (!isNaN(numValue)) {
+              form.setValue('alpha', numValue, { shouldValidate: true });
+          } else {
+              // If input is not a number (e.g., "abc"), keep it in input but mark as invalid
+              form.setValue('alpha', value as any, { shouldValidate: true });
+          }
+      }
+      // Clear results when alpha changes
       setReportResults(null);
       setCalculationError(null);
   };
@@ -232,7 +247,8 @@ export default function DisparityCalculator() {
      }
    try {
        // Pass reportResults and the current form values (including reference selection)
-       exportToCSV(reportResults, form.getValues(), `statistical-report_${Date.now()}.csv`);
+       // Need to cast FormValues to ExportFormValues if they differ slightly, otherwise use directly
+       exportToCSV(reportResults, form.getValues() as ExportFormValues, `statistical-report_${Date.now()}.csv`);
         toast({
            title: "Export Successful",
            description: "Report data exported to CSV.",
@@ -268,10 +284,23 @@ export default function DisparityCalculator() {
           return;
       }
 
+      // Ensure the report tab is active before capturing
       if (activeTab !== 'report') {
           setActiveTab('report');
+          // Wait a short moment for the tab content to render
           await new Promise(resolve => setTimeout(resolve, 200));
       }
+
+      // Re-select the element after potential tab switch and re-render
+      const currentReportElement = reportRef.current;
+       if (!currentReportElement) {
+          toast({
+               title: "PDF Export Failed",
+               description: "Report element not found after tab switch.",
+               variant: "destructive",
+          });
+         return;
+     }
 
 
       toast({
@@ -280,20 +309,21 @@ export default function DisparityCalculator() {
       });
 
    try {
-        const canvas = await html2canvas(reportElement, {
-             scale: 2,
-             useCORS: true,
-             logging: false,
-             backgroundColor: '#ffffff',
+        // Capture the specific report content area
+        const canvas = await html2canvas(currentReportElement, {
+             scale: 2, // Increase scale for better resolution
+             useCORS: true, // If using external images/fonts
+             logging: false, // Disable html2canvas logging in production
+             backgroundColor: '#ffffff', // Set explicit background
         });
 
        const imgData = canvas.toDataURL('image/png');
        const pdf = new jsPDF({
-           orientation: 'l',
-           unit: 'pt',
-           format: 'a4',
+           orientation: 'l', // landscape
+           unit: 'pt', // points
+           format: 'a4', // page format
            putOnlyUsedFonts:true,
-           floatPrecision: 16
+           floatPrecision: 16 // or "smart", default is 16
        });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -301,18 +331,22 @@ export default function DisparityCalculator() {
         const imgWidth = canvas.width;
         const imgHeight = canvas.height;
 
+        // Calculate margins (e.g., 40 points)
         const margin = 40;
         const availableWidth = pdfWidth - margin * 2;
         const availableHeight = pdfHeight - margin * 2;
 
+        // Calculate the ratio to fit the image within the available space
         const ratio = Math.min(availableWidth / imgWidth, availableHeight / imgHeight);
 
+        // Calculate the dimensions and position of the image on the PDF
         const imgX = margin;
         const imgY = margin;
         const effectiveImgWidth = imgWidth * ratio;
         const effectiveImgHeight = imgHeight * ratio;
 
 
+       // Add the image to the PDF, positioned with margins
        pdf.addImage(imgData, 'PNG', imgX, imgY, effectiveImgWidth, effectiveImgHeight);
 
        const filename = `statistical-report_${Date.now()}.pdf`;
@@ -358,7 +392,7 @@ export default function DisparityCalculator() {
          {/* Input Tab */}
          <TabsContent value="input">
              <Card className="w-full max-w-5xl mx-auto shadow-lg mt-4">
-                 <Toaster />
+                 {/* Removed duplicate Toaster */}
                  <CardHeader>
                      <CardTitle className="text-2xl text-secondary-foreground">Input Parameters</CardTitle>
                  </CardHeader>
@@ -372,18 +406,19 @@ export default function DisparityCalculator() {
                                      id="alpha"
                                      type="number"
                                      step="any"
-                                     min="0.0000000001" // Set min based on refine constraints
-                                     max="1"             // Set max based on refine constraints
+                                     // Use spread for register, but keep explicit onChange for clearing results
                                      {...form.register("alpha")}
+                                     value={form.watch('alpha')} // Ensure input reflects form state including empty string
                                      onChange={handleAlphaChange}
                                      className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
+                                     placeholder="e.g., 0.05"
                                  />
                                  <TooltipProvider>
                                      <Tooltip>
                                          <TooltipTrigger asChild>
                                              <span className="text-sm text-muted-foreground cursor-default flex items-center gap-1">
                                                  <Info className="h-4 w-4" />
-                                                 (Default: 0.05)
+                                                 (0 &lt; α ≤ 1)
                                              </span>
                                          </TooltipTrigger>
                                          <TooltipContent>
@@ -408,11 +443,13 @@ export default function DisparityCalculator() {
                                                  id={`groups.${index}.name`}
                                                  {...form.register(`groups.${index}.name`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.name ? "border-destructive" : "")}
-                                                  onChange={() => {
+                                                  onChange={(e) => {
+                                                     // Update the specific field value
+                                                     form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
+                                                     // Clear results and trigger reference validation
                                                      setReportResults(null);
                                                      setCalculationError(null);
-                                                     // Trigger revalidation of reference categories after name change
-                                                      form.trigger('referenceCategories');
+                                                     form.trigger('referenceCategories');
                                                   }}
                                              />
                                              {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
@@ -427,7 +464,11 @@ export default function DisparityCalculator() {
                                                  step="1"
                                                  {...form.register(`groups.${index}.experienced`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "")}
-                                                 onChange={() => { setReportResults(null); setCalculationError(null); form.trigger(`groups.${index}.experienced`); }}
+                                                 onChange={(e) => {
+                                                     form.setValue(`groups.${index}.experienced`, e.target.value as any, { shouldValidate: true });
+                                                     setReportResults(null);
+                                                     setCalculationError(null);
+                                                 }}
                                              />
                                              {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
                                          </div>
@@ -441,7 +482,11 @@ export default function DisparityCalculator() {
                                                  step="1"
                                                  {...form.register(`groups.${index}.notExperienced`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "")}
-                                                  onChange={() => { setReportResults(null); setCalculationError(null); form.trigger(`groups.${index}.notExperienced`); }}
+                                                  onChange={(e) => {
+                                                      form.setValue(`groups.${index}.notExperienced`, e.target.value as any, { shouldValidate: true });
+                                                      setReportResults(null);
+                                                      setCalculationError(null);
+                                                  }}
                                              />
                                              {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
                                          </div>
@@ -499,13 +544,26 @@ export default function DisparityCalculator() {
                                                          checked={field.value?.includes(name)}
                                                          onCheckedChange={(checked) => {
                                                              const currentValues = field.value || [];
+                                                             let newValues;
                                                              if (checked) {
-                                                                  field.onChange([...currentValues, name]);
+                                                                  newValues = [...currentValues, name];
                                                              } else {
-                                                                  field.onChange(currentValues.filter(value => value !== name));
+                                                                  newValues = currentValues.filter(value => value !== name);
                                                              }
-                                                              setReportResults(null); // Clear results when selection changes
-                                                              setCalculationError(null);
+                                                             // Ensure at least one is selected if attempting to uncheck the last one
+                                                             if (newValues.length === 0 && currentValues.length === 1 && !checked) {
+                                                                toast({
+                                                                    title: "Selection Required",
+                                                                    description: "At least one reference category must be selected.",
+                                                                    variant: "destructive",
+                                                                    duration: 3000,
+                                                                });
+                                                                 // Don't update field.onChange if validation fails
+                                                             } else {
+                                                                  field.onChange(newValues);
+                                                                  setReportResults(null); // Clear results when selection changes
+                                                                  setCalculationError(null);
+                                                             }
                                                          }}
                                                      />
                                                      <Label htmlFor={`ref-${name}`} className="font-normal cursor-pointer">
@@ -539,8 +597,8 @@ export default function DisparityCalculator() {
 
          {/* Report Tab */}
          <TabsContent value="report">
-             <div ref={reportRef} className="bg-white p-4 rounded-md shadow">
-                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none">
+             <div ref={reportRef} className="bg-white p-4 rounded-md shadow"> {/* This div will be captured for PDF */}
+                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none"> {/* Removed border */}
                       <CardHeader className="flex flex-row justify-between items-center pb-2">
                           <CardTitle className="text-2xl text-secondary-foreground">Statistical Report</CardTitle>
                           <div className="flex gap-2">
@@ -573,6 +631,18 @@ export default function DisparityCalculator() {
                                  <AlertDescription>{calculationError}</AlertDescription>
                              </Alert>
                          )}
+
+                        {/* Display Input Parameters in Report */}
+                        {reportResults && form.formState.isValid && (
+                             <div className="space-y-2 p-4 border rounded-md bg-card mb-6">
+                                <h3 className="text-md font-semibold text-secondary-foreground border-b pb-1 mb-2">Report Parameters</h3>
+                                <div className="text-sm grid grid-cols-2 gap-x-4">
+                                     <div><strong>Significance Level (α):</strong> {formatDecimal(form.getValues('alpha'), 4)}</div>
+                                     <div><strong>Reference Categories:</strong> {selectedReferenceCategories.join(', ')}</div>
+                                </div>
+                             </div>
+                        )}
+
 
                          {/* Phase 1: Contingency Table Summary */}
                          {reportResults?.contingencySummary && reportResults.contingencySummary.length > 0 && (
@@ -625,6 +695,13 @@ export default function DisparityCalculator() {
                                                <span className="font-medium"># of Pairwise Comparisons:</span>
                                                <span>{reportResults.overallStats.numComparisons}</span>
                                            </div>
+                                           {/* Display Bonferroni Alpha */}
+                                           {reportResults.overallStats.numComparisons > 0 && (
+                                                <div className="flex justify-between">
+                                                    <span className="font-medium">Bonferroni Corrected α:</span>
+                                                    <span>{formatDecimal(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 4)}</span>
+                                                </div>
+                                           )}
                                       </div>
 
                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2">
@@ -705,7 +782,7 @@ export default function DisparityCalculator() {
                                                        <TableRow className="border-b hover:bg-muted/50">
                                                            <TableHead className="pl-0">Comparison Category</TableHead>
                                                            <TableHead className="text-right pr-0">Corrected P-Value</TableHead>
-                                                            <TableHead className="text-right pr-0">Interpretation (vs Bonf. α)</TableHead> {/* Clarified interpretation */}
+                                                           <TableHead className="text-right pr-0">Interpretation (vs Bonf. α)</TableHead> {/* Clarified interpretation */}
                                                        </TableRow>
                                                    </TableHeader>
                                                    <TableBody>
@@ -724,11 +801,11 @@ export default function DisparityCalculator() {
                                                                         <TableCell className="font-medium pl-0 py-1">{compareName}</TableCell>
                                                                         <TableCell className={cn(
                                                                             "text-right pr-0 py-1",
-                                                                            isSignificant ? 'text-destructive font-semibold' : 'text-gray-700' // Using gray for non-significant
+                                                                            isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground' // Use muted for non-significant
                                                                         )}>
                                                                             {formatScientific(pValue)}
                                                                         </TableCell>
-                                                                         <TableCell className="text-right pr-0 py-1">
+                                                                        <TableCell className="text-right pr-0 py-1">
                                                                              {/* Use correctedAlpha for pairwise interpretation */}
                                                                             {renderInterpretation(pValue, correctedAlpha)}
                                                                          </TableCell>
