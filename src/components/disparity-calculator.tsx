@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { FormEvent } from 'react';
@@ -163,8 +162,8 @@ export default function DisparityCalculator() {
 
     // Clear results if groups change substantially (add/remove/rename)
     // We might want finer control, but this is safer for now.
-    setReportResults(null);
-    setCalculationError(null);
+    // setReportResults(null); // Keep results for minor edits
+    // setCalculationError(null);
 
     // Trigger validation for referenceCategories when group names change
     form.trigger('referenceCategories');
@@ -236,6 +235,7 @@ export default function DisparityCalculator() {
                      variant: "destructive",
                      duration: 10000,
                  });
+                 setActiveTab("input"); // Stay on input tab on critical failure
              } else if (warningErrors.length > 0) {
                  const warningMsg = warningErrors.join('; ');
                  // Set a non-blocking error state for warnings
@@ -535,7 +535,7 @@ export default function DisparityCalculator() {
                                                      // Update the specific field value
                                                      form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
                                                      // Clear results and trigger reference validation
-                                                     setReportResults(null);
+                                                     setReportResults(null); // Clear results on name change
                                                      setCalculationError(null);
                                                      // useEffect handles reference updates/validation
                                                   }}
@@ -554,9 +554,11 @@ export default function DisparityCalculator() {
                                                  className={cn("border", form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input")}
                                                  onChange={(e) => {
                                                      form.setValue(`groups.${index}.experienced`, e.target.value as any, { shouldValidate: true });
-                                                     setReportResults(null);
-                                                     setCalculationError(null);
-                                                      if (reportResults) form.handleSubmit(onSubmit)(); // Recalculate if results exist
+                                                     // Only clear results if the form was previously submitted and valid
+                                                     // This allows minor edits without losing the report unless explicitly regenerated
+                                                     // setReportResults(null);
+                                                     // setCalculationError(null);
+                                                      // if (reportResults) form.handleSubmit(onSubmit)(); // Optional: Recalculate immediately
                                                  }}
                                              />
                                              {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
@@ -573,9 +575,9 @@ export default function DisparityCalculator() {
                                                  className={cn("border", form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "border-input")}
                                                   onChange={(e) => {
                                                       form.setValue(`groups.${index}.notExperienced`, e.target.value as any, { shouldValidate: true });
-                                                      setReportResults(null);
-                                                      setCalculationError(null);
-                                                       if (reportResults) form.handleSubmit(onSubmit)(); // Recalculate if results exist
+                                                      // setReportResults(null);
+                                                      // setCalculationError(null);
+                                                       // if (reportResults) form.handleSubmit(onSubmit)(); // Optional: Recalculate immediately
                                                   }}
                                              />
                                              {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
@@ -587,7 +589,7 @@ export default function DisparityCalculator() {
                                          size="icon"
                                          onClick={() => {
                                              remove(index);
-                                             setReportResults(null);
+                                             setReportResults(null); // Clear results on remove
                                              setCalculationError(null);
                                              // useEffect handles reference updates
                                           }}
@@ -612,7 +614,7 @@ export default function DisparityCalculator() {
                                           newName = `Group ${fields.length + 1}-${suffix++}`;
                                       }
                                       append({ name: newName, experienced: 0, notExperienced: 0 });
-                                      setReportResults(null);
+                                      setReportResults(null); // Clear results on add
                                       setCalculationError(null);
                                       // useEffect will handle auto-selecting the first reference if needed
                                   }}
@@ -661,13 +663,12 @@ export default function DisparityCalculator() {
                                                                  // Don't update field.onChange if validation fails
                                                              } else {
                                                                   field.onChange(newValues);
-                                                                  // Trigger calculation if results already exist AND form is valid
-                                                                   if (reportResults) {
-                                                                       // Use handleSubmit to ensure validity before re-calculating
-                                                                        form.handleSubmit(onSubmit)();
-                                                                   } else {
-                                                                       setCalculationError(null); // Clear error if no results yet
-                                                                   }
+                                                                  // Optionally trigger recalculation if results exist
+                                                                   // if (reportResults) {
+                                                                       // form.handleSubmit(onSubmit)();
+                                                                   // } else {
+                                                                       // setCalculationError(null);
+                                                                   // }
                                                              }
                                                          }}
                                                      />
@@ -771,7 +772,7 @@ export default function DisparityCalculator() {
                                                   {/* Observed Columns */}
                                                   <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
                                                   {/* Expected Columns */}
-                                                  <TableHead colSpan={2} className="text-center border-r">% Experienced</TableHead>
+                                                  <TableHead rowSpan={2} className="text-center border-r align-bottom pb-2">% Experienced</TableHead>
                                                   <TableHead colSpan={2} className="text-center">Expected</TableHead>
                                              </TableRow>
                                               <TableRow className="hover:bg-table-header-bg/90">
@@ -779,8 +780,6 @@ export default function DisparityCalculator() {
                                                    <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                                    <TableHead className="text-right border-r">Row Subtotal</TableHead>
-                                                    {/* % Experienced Sub-header */}
-                                                   <TableHead className="text-right border-r">% Experienced</TableHead>
                                                    {/* Expected Sub-headers */}
                                                    <TableHead className="text-right"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
@@ -867,7 +866,7 @@ export default function DisparityCalculator() {
                                                       <TableHead className="font-medium pl-0 h-auto py-1">Test</TableHead>
                                                       <TableHead className="font-medium text-right h-auto py-1">Statistic</TableHead>
                                                       <TableHead className="font-medium text-right h-auto py-1">P-Value</TableHead>
-                                                      <TableHead className="font-medium text-right pr-0 h-auto py-1">Interpretation (vs α)</TableHead>
+                                                      <TableHead className="font-medium text-right pr-0 h-auto py-1 text-wrap max-w-[200px]">Interpretation (vs α)</TableHead>
                                                   </TableRow>
                                               </TableHeader>
                                               <TableBody>
@@ -878,7 +877,7 @@ export default function DisparityCalculator() {
                                                        <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
                                                            {formatScientific(reportResults.overallStats.chiSquare.pValue)}
                                                        </TableCell>
-                                                        <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                        <TableCell className="text-right pr-0 py-1">
                                                             {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
                                                         </TableCell>
                                                    </TableRow>
@@ -890,7 +889,7 @@ export default function DisparityCalculator() {
                                                         <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
                                                            {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
                                                         </TableCell>
-                                                         <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                         <TableCell className="text-right pr-0 py-1">
                                                               {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
                                                           </TableCell>
                                                     </TableRow>
@@ -902,7 +901,7 @@ export default function DisparityCalculator() {
                                                         <TableCell className={cn("text-right py-1", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
                                                            {formatScientific(reportResults.overallStats.gTest.pValue)}
                                                         </TableCell>
-                                                         <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                         <TableCell className="text-right pr-0 py-1">
                                                             {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
                                                         </TableCell>
                                                     </TableRow>
@@ -993,7 +992,7 @@ export default function DisparityCalculator() {
                                                                <TableRow className="border-b-0 hover:bg-transparent">
                                                                    <TableHead className="pl-0 h-auto py-1">Comparison Group</TableHead>
                                                                    <TableHead className="text-right h-auto py-1">Corrected P-Value</TableHead>
-                                                                   <TableHead className="text-right pr-0 h-auto py-1">Interpretation (vs α_bonf)</TableHead>
+                                                                   <TableHead className="text-right pr-0 h-auto py-1 text-wrap max-w-[200px]">Interpretation (vs α_bonf)</TableHead>
                                                                </TableRow>
                                                           </TableHeader>
                                                           <TableBody>
@@ -1042,5 +1041,3 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
-
-    
