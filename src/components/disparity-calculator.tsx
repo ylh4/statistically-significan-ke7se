@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { FormEvent } from 'react'; // Removed ChangeEvent as RHF handles it
@@ -56,9 +55,8 @@ const formSchema = z.object({
     .number({ invalid_type_error: "Significance Level must be a number" })
     .positive("Significance Level must be positive") // Must be > 0
     .lt(1, "Significance Level must be less than 1") // Must be < 1
-    .refine(val => val >= 0.0000000001, { message: "Significance Level too small" }) // Very small lower bound
-    .refine(val => val <= 0.9999999999, { message: "Significance Level too large" }), // Very high upper bound
-    // Default to 0.05 if empty or invalid, handled in component logic
+    .refine(val => val >= 0.0000000001 && val <= 0.9999999999, { message: "Significance Level must be between 1E-10 and 0.9999999999" }) // Combined bounds check
+    .default(0.05), // Provide default within the schema
   groups: z.array(groupSchema).min(2, "At least two categories are required"),
 });
 
@@ -73,13 +71,13 @@ export default function DisparityCalculator() {
   const [reportResults, setReportResults] = useState<MultiComparisonResults | null>(null);
   const [calculationError, setCalculationError] = useState<string | null>(null);
   const reportRef = useRef<HTMLDivElement>(null); // Ref for PDF export area
-  const [activeTab, setActiveTab] = useState<string>("report"); // Default tab
+  const [activeTab, setActiveTab] = useState<string>("input"); // Default tab
 
 
    const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      alpha: 0.05, // Default alpha
+      alpha: 0.05, // Default alpha explicitly set, Zod default also helps
       groups: [ // Default groups
         { name: "Black or African American", experienced: 862, notExperienced: 7195 },
         { name: "Native Hawaiian or Other Pacific Islander", experienced: 3, notExperienced: 27 },
@@ -99,21 +97,10 @@ export default function DisparityCalculator() {
     name: "groups",
   });
 
-  const watchAlpha = form.watch("alpha"); // Watch alpha for display/calculations
-
-  // Handler for Alpha input change to ensure it stays within bounds and resets calculation
+  // Handler for Alpha input change
   const handleAlphaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      let newValue: number | null = parseFloat(e.target.value);
-
-      if (isNaN(newValue) || newValue <= 0 || newValue >= 1) {
-         // If invalid, keep the input field value as is but maybe show error,
-         // or reset to default? Let's keep RHF state potentially invalid for Zod.
-         form.setValue('alpha', e.target.value as any, { shouldValidate: true }); // Let Zod handle detailed validation
-      } else {
-         // Clamp value to practical bounds (adjust as needed)
-         newValue = Math.max(0.0000000001, Math.min(0.9999999999, newValue));
-         form.setValue('alpha', newValue, { shouldValidate: true });
-      }
+      // Let RHF and Zod handle the validation based on the schema
+      form.setValue('alpha', e.target.value as any, { shouldValidate: true });
       // Clear results when alpha changes, as they become invalid
       setReportResults(null);
       setCalculationError(null);
@@ -128,7 +115,7 @@ export default function DisparityCalculator() {
     try {
       // Use the new calculation function
       const results = performMultiComparisonReport({
-        alpha: data.alpha,
+        alpha: data.alpha, // Use validated alpha
         groups: data.groups,
       });
 
@@ -168,19 +155,7 @@ export default function DisparityCalculator() {
 
   // Reset form and results
   const handleReset = () => {
-    form.reset({ // Reset to the defined default values
-        alpha: 0.05,
-        groups: [
-          { name: "Black or African American", experienced: 862, notExperienced: 7195 },
-          { name: "Native Hawaiian or Other Pacific Islander", experienced: 3, notExperienced: 27 },
-          { name: "American Indian or Alaska Native", experienced: 35, notExperienced: 339 },
-          { name: "White or Caucasian", experienced: 1681, notExperienced: 17133 },
-          { name: "Asian", experienced: 44, notExperienced: 534 },
-          { name: "Other Race", experienced: 223, notExperienced: 3131 },
-          { name: "Multiracial", experienced: 16, notExperienced: 294 },
-          { name: "Unknown", experienced: 13, notExperienced: 294 },
-        ],
-    });
+    form.reset(); // Reset to defaultValues defined in useForm
     setReportResults(null);
     setCalculationError(null);
      toast({
@@ -190,7 +165,7 @@ export default function DisparityCalculator() {
       setActiveTab("input"); // Switch back to input tab on reset
   };
 
-  // Handle CSV Export - TODO: Update exportToCSV to handle the new report format
+ // Handle CSV Export - Uses updated exportToCSV
  const handleExport = () => {
      if (!reportResults || (!reportResults.contingencySummary && !reportResults.overallStats && !reportResults.pairwiseResultsMatrix)) {
           toast({
@@ -201,8 +176,7 @@ export default function DisparityCalculator() {
          return;
      }
    try {
-       // Assuming exportToCSV is updated to accept MultiComparisonResults
-       // and format it appropriately. Needs implementation in utils.ts.
+       // Pass both reportResults and the current form values (inputData)
        exportToCSV(reportResults, form.getValues(), `statistical-report_${Date.now()}.csv`);
         toast({
            title: "Export Successful",
@@ -218,9 +192,11 @@ export default function DisparityCalculator() {
    }
  };
 
+
  // Handle PDF Export
  const handleExportPDF = async () => {
-     if (!reportRef.current) {
+     const reportElement = reportRef.current;
+     if (!reportElement) {
           toast({
                title: "PDF Export Failed",
                description: "Report element not found.",
@@ -251,33 +227,45 @@ export default function DisparityCalculator() {
       });
 
    try {
-       // Ensure the content is fully rendered before capturing
-        await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+       // Capture the specific div
+        const canvas = await html2canvas(reportElement, {
+             scale: 2, // Increase scale for better resolution
+             useCORS: true,
+             logging: false,
+             backgroundColor: '#ffffff', // Set background to white explicitly
+             // Try to capture full page content if possible, might need adjustments
+             // windowWidth: reportElement.scrollWidth,
+             // windowHeight: reportElement.scrollHeight,
+        });
 
-       const canvas = await html2canvas(reportRef.current, {
-            scale: 2,
-            useCORS: true,
-            logging: false, // Disable logging unless debugging
-            // Try to capture background colors
-            backgroundColor: null, // Use element's background or default white
-       });
        const imgData = canvas.toDataURL('image/png');
        const pdf = new jsPDF({
-           orientation: 'l', // landscape might be better for wide tables
+           orientation: 'l', // landscape
            unit: 'pt',
-           format: 'a4'
+           format: 'a4',
+           putOnlyUsedFonts:true,
+           floatPrecision: 16 // or "smart", default is 16
        });
 
-       const pdfWidth = pdf.internal.pageSize.getWidth();
-       const pdfHeight = pdf.internal.pageSize.getHeight();
-       const imgWidth = canvas.width;
-       const imgHeight = canvas.height;
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imgWidth = canvas.width;
+        const imgHeight = canvas.height;
 
-       const ratio = Math.min((pdfWidth - 40) / imgWidth, (pdfHeight - 40) / imgHeight); // Add margin
-       const imgX = (pdfWidth - imgWidth * ratio) / 2;
-       const imgY = 20; // Top margin
+        // Calculate the ratio to fit the image within the PDF page margins (e.g., 20pt margin)
+        const margin = 40;
+        const availableWidth = pdfWidth - margin * 2;
+        const availableHeight = pdfHeight - margin * 2;
 
-       pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+        const ratio = Math.min(availableWidth / imgWidth, availableHeight / imgHeight);
+
+        const imgX = margin;
+        const imgY = margin;
+        const effectiveImgWidth = imgWidth * ratio;
+        const effectiveImgHeight = imgHeight * ratio;
+
+
+       pdf.addImage(imgData, 'PNG', imgX, imgY, effectiveImgWidth, effectiveImgHeight);
 
        const filename = `statistical-report_${Date.now()}.pdf`;
        pdf.save(filename);
@@ -301,15 +289,16 @@ export default function DisparityCalculator() {
 
 
  // Helper to render the interpretation text with icon
- const renderInterpretation = (text: string | undefined) => {
-     if (!text) return null;
-     const isSignificant = text.toLowerCase().includes("statistically different");
-     return (
-         <span className={cn("ml-2 text-xs italic", isSignificant ? "text-destructive" : "text-muted-foreground")}>
-             {text}
+ const renderInterpretation = (p: number | null | undefined, alpha: number) => {
+    if (p === null || p === undefined || isNaN(p)) return null; // Handle invalid p-values
+    const isSignificant = p < alpha;
+    return (
+         <span className={cn("ml-2 text-xs italic", isSignificant ? "text-destructive font-semibold" : "text-muted-foreground")}>
+             {isSignificant ? "Statistically different" : "Not statistically different"}
          </span>
      );
  };
+
 
  return (
      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -336,11 +325,10 @@ export default function DisparityCalculator() {
                                      id="alpha"
                                      type="number"
                                      step="any" // Allow any step for flexible input
-                                     min="0.0000000001" // Browser hint, Zod enforces
-                                     max="0.9999999999" // Browser hint, Zod enforces
                                      {...form.register("alpha")}
                                      onChange={handleAlphaChange} // Use custom handler
                                      className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
+                                     // Add placeholder or default display if needed
                                  />
                                  <TooltipProvider>
                                      <Tooltip>
@@ -372,6 +360,7 @@ export default function DisparityCalculator() {
                                                  id={`groups.${index}.name`}
                                                  {...form.register(`groups.${index}.name`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.name ? "border-destructive" : "")}
+                                                 onChange={() => { setReportResults(null); setCalculationError(null); }} // Clear results on name change too
                                              />
                                              {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
                                          </div>
@@ -385,7 +374,7 @@ export default function DisparityCalculator() {
                                                  step="1"
                                                  {...form.register(`groups.${index}.experienced`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "")}
-                                                 onChange={() => { setReportResults(null); setCalculationError(null); }} // Clear results on count change
+                                                 onChange={() => { setReportResults(null); setCalculationError(null); form.trigger(`groups.${index}.experienced`); }} // Clear results and trigger validation
                                              />
                                              {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
                                          </div>
@@ -399,7 +388,7 @@ export default function DisparityCalculator() {
                                                  step="1"
                                                  {...form.register(`groups.${index}.notExperienced`)}
                                                  className={cn(form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "")}
-                                                  onChange={() => { setReportResults(null); setCalculationError(null); }} // Clear results on count change
+                                                  onChange={() => { setReportResults(null); setCalculationError(null); form.trigger(`groups.${index}.notExperienced`); }} // Clear results and trigger validation
                                              />
                                              {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
                                          </div>
@@ -434,7 +423,7 @@ export default function DisparityCalculator() {
                              <Button type="button" variant="outline" onClick={handleReset}>
                                  <RotateCcw className="mr-2 h-4 w-4" /> Reset Form
                              </Button>
-                             <Button type="submit" disabled={!form.formState.isValid} className="bg-primary hover:bg-accent text-primary-foreground">
+                             <Button type="submit" disabled={!form.formState.isValid || form.formState.isSubmitting} className="bg-primary hover:bg-accent text-primary-foreground">
                                  <FileText className="mr-2 h-4 w-4" /> Generate Report
                              </Button>
                          </div>
@@ -445,9 +434,10 @@ export default function DisparityCalculator() {
 
          {/* Report Tab */}
          <TabsContent value="report">
-             <div ref={reportRef} className="p-1"> {/* Add padding to ref for PDF capture */}
-                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4"> {/* Wider card for report */}
-                      <CardHeader className="flex flex-row justify-between items-center">
+              {/* Wrap content in a div with ref for PDF export */}
+             <div ref={reportRef} className="bg-white p-4 rounded-md shadow"> {/* Ensure background for PDF */}
+                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none"> {/* Wider card, remove internal border if needed */}
+                      <CardHeader className="flex flex-row justify-between items-center pb-2"> {/* Reduced bottom padding */}
                           <CardTitle className="text-2xl text-secondary-foreground">Statistical Report</CardTitle>
                           <div className="flex gap-2">
                              <Button
@@ -455,6 +445,7 @@ export default function DisparityCalculator() {
                                    variant="outline"
                                    onClick={handleExport}
                                    disabled={!reportResults}
+                                   size="sm"
                                >
                                    <Download className="mr-2 h-4 w-4" /> Export CSV
                              </Button>
@@ -463,13 +454,14 @@ export default function DisparityCalculator() {
                                     variant="outline"
                                     onClick={handleExportPDF}
                                     disabled={!reportResults}
+                                    size="sm"
                              >
                                     <FileDown className="mr-2 h-4 w-4" /> Export PDF
                               </Button>
                          </div>
                       </CardHeader>
 
-                     <CardContent className="space-y-8 pt-4">
+                     <CardContent className="space-y-6 pt-4"> {/* Slightly reduced space */}
                          {calculationError && (
                              <Alert variant="destructive" className="w-full mb-4">
                                  <AlertCircle className="h-4 w-4" />
@@ -481,27 +473,29 @@ export default function DisparityCalculator() {
                          {/* Phase 1: Contingency Table Summary */}
                          {reportResults?.contingencySummary && reportResults.contingencySummary.length > 0 && (
                              <div className="space-y-2">
-                                 <h3 className="text-lg font-semibold text-secondary-foreground">Contingency Table Summary</h3>
+                                 <h3 className="text-lg font-semibold text-secondary-foreground mb-2">Contingency Table Summary</h3>
                                  <div className="overflow-x-auto rounded-md border">
                                      <Table>
-                                         <TableHeader className="bg-secondary">
-                                             <TableRow className="bg-gray-800 hover:bg-gray-700"> {/* Dark Header */}
-                                                 <TableHead className="text-white">Category (Race)</TableHead>
-                                                 <TableHead className="text-right text-white"># Did NOT Experience</TableHead>
-                                                 <TableHead className="text-right text-white"># Experienced</TableHead>
-                                                 <TableHead className="text-right text-white">Row Subtotal</TableHead>
-                                                 <TableHead className="text-right text-white">% Experienced</TableHead>
+                                          {/* Use custom dark header class */}
+                                         <TableHeader className="table-header-dark">
+                                             <TableRow className="hover:bg-table-header-bg/90">
+                                                 <TableHead>Category (Race)</TableHead>
+                                                 <TableHead className="text-right"># Did NOT Experience</TableHead>
+                                                 <TableHead className="text-right"># Experienced</TableHead>
+                                                 <TableHead className="text-right">Row Subtotal</TableHead>
+                                                 <TableHead className="text-right">% Experienced</TableHead>
                                              </TableRow>
                                          </TableHeader>
                                          <TableBody>
                                              {reportResults.contingencySummary.map((row, index) => (
-                                                 <TableRow key={row.name} className={cn(index % 2 === 0 ? "bg-gray-100" : "bg-white", "hover:bg-muted/50")}> {/* Alternating Row Colors */}
+                                                  // Use custom alternating row class
+                                                 <TableRow key={row.name} className={cn("table-row-alt", "hover:bg-muted/50")}>
                                                      <TableCell className="font-medium py-2 px-4">{row.name}</TableCell>
-                                                      {/* Apply tint to data columns */}
-                                                     <TableCell className="text-right py-2 px-4 bg-orange-50">{row.notExperienced.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 bg-orange-50">{row.experienced.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 bg-orange-50">{row.rowTotal.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 bg-orange-50">{formatPercent(row.percentExperienced)}</TableCell>
+                                                      {/* Use custom tinted cell class */}
+                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.notExperienced.toLocaleString()}</TableCell>
+                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
+                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.rowTotal.toLocaleString()}</TableCell>
+                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{formatPercent(row.percentExperienced)}</TableCell>
                                                  </TableRow>
                                              ))}
                                          </TableBody>
@@ -513,133 +507,137 @@ export default function DisparityCalculator() {
                          {/* Phase 2: Overall Tests Results Box */}
                          {reportResults?.overallStats && (
                              <div className="space-y-4 p-4 border rounded-md bg-card">
-                                  <h3 className="text-lg font-semibold text-secondary-foreground border-b pb-2">Overall Test Results</h3>
+                                  <h3 className="text-lg font-semibold text-secondary-foreground border-b pb-2 mb-3">Overall Test Results</h3>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
                                      {/* Left Column */}
                                      <div className="space-y-2">
                                          <div className="flex justify-between">
                                              <span className="font-medium">Limit (Significance Level, α):</span>
-                                              {/* Alpha might need adjustment if user changes it after calculation */}
                                              <span>{formatDecimal(reportResults.overallStats.limitAlpha, 4)}</span>
                                          </div>
                                          <div className="flex justify-between">
                                              <span className="font-medium">Degrees of Freedom:</span>
                                              <span>{reportResults.overallStats.degreesOfFreedom}</span>
                                          </div>
-                                         <div className="flex justify-between">
-                                             <span className="font-medium"># of Pairwise Comparisons:</span>
-                                             <span>{reportResults.overallStats.numComparisons}</span>
-                                         </div>
                                      </div>
-                                      {/* Right Column - Placeholder or can add more overall stats */}
-                                      <div></div>
-
-                                      {/* Test Results */}
-                                      {/* Chi-square */}
-                                      <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2 space-y-1">
-                                          <div className="flex justify-between">
-                                               <span className="font-medium">Chi-square Test Statistic:</span>
-                                               <span>{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</span>
-                                          </div>
-                                          <div className="flex justify-between items-center">
-                                              <span className="font-medium">Chi-square P-Value:</span>
-                                               <span className={cn(reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                  {formatScientific(reportResults.overallStats.chiSquare.pValue)}
-                                              </span>
-                                          </div>
-                                           <div className="text-right">
-                                               {renderInterpretation(reportResults.overallStats.chiSquare.interpretation)}
+                                      {/* Right Column */}
+                                      <div className="space-y-2">
+                                           <div className="flex justify-between">
+                                               <span className="font-medium"># of Pairwise Comparisons:</span>
+                                               <span>{reportResults.overallStats.numComparisons}</span>
                                            </div>
+                                            {/* Placeholder for potential future additions */}
                                       </div>
 
-                                      {/* Chi-square (Yates) */}
-                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2 space-y-1">
-                                           <div className="flex justify-between">
-                                               <span className="font-medium">Chi-square (Yates) Test Statistic:</span>
-                                                <span>{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</span>
-                                           </div>
-                                           <div className="flex justify-between items-center">
-                                                <span className="font-medium">Chi-square (Yates) P-Value:</span>
-                                                <span className={cn(reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                   {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
-                                               </span>
-                                           </div>
-                                           <div className="text-right">
-                                                {renderInterpretation(reportResults.overallStats.chiSquareYates.interpretation)}
-                                            </div>
-                                       </div>
-
-                                       {/* G-Test */}
-                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2 space-y-1">
-                                           <div className="flex justify-between">
-                                               <span className="font-medium">G-Test Statistic:</span>
-                                                <span>{formatDecimal(reportResults.overallStats.gTest.statistic)}</span>
-                                           </div>
-                                           <div className="flex justify-between items-center">
-                                                <span className="font-medium">G-Test P-Value:</span>
-                                               <span className={cn(reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                    {formatScientific(reportResults.overallStats.gTest.pValue)}
-                                                </span>
-                                           </div>
-                                            <div className="text-right">
-                                                {renderInterpretation(reportResults.overallStats.gTest.interpretation)}
-                                            </div>
-                                       </div>
+                                      {/* Test Results Table */}
+                                      <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2">
+                                          <Table>
+                                              <TableHeader>
+                                                  <TableRow className="border-b-0">
+                                                      <TableHead className="pl-0">Test</TableHead>
+                                                      <TableHead className="text-right">Statistic</TableHead>
+                                                      <TableHead className="text-right">P-Value</TableHead>
+                                                      <TableHead className="text-right pr-0">Interpretation</TableHead>
+                                                  </TableRow>
+                                              </TableHeader>
+                                              <TableBody>
+                                                  {/* Chi-square */}
+                                                  <TableRow className="hover:bg-transparent">
+                                                      <TableCell className="font-medium pl-0 py-1">Chi-square</TableCell>
+                                                      <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</TableCell>
+                                                      <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                          {formatScientific(reportResults.overallStats.chiSquare.pValue)}
+                                                      </TableCell>
+                                                       <TableCell className="text-right pr-0 py-1">
+                                                           {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
+                                                       </TableCell>
+                                                  </TableRow>
+                                                  {/* Chi-square (Yates) */}
+                                                   <TableRow className="hover:bg-transparent">
+                                                      <TableCell className="font-medium pl-0 py-1">Chi-square (Yates)</TableCell>
+                                                       <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</TableCell>
+                                                       <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                          {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
+                                                      </TableCell>
+                                                       <TableCell className="text-right pr-0 py-1">
+                                                            {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
+                                                        </TableCell>
+                                                  </TableRow>
+                                                  {/* G-Test */}
+                                                  <TableRow className="hover:bg-transparent">
+                                                      <TableCell className="font-medium pl-0 py-1">G-Test</TableCell>
+                                                      <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.gTest.statistic)}</TableCell>
+                                                      <TableCell className={cn("text-right py-1", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                          {formatScientific(reportResults.overallStats.gTest.pValue)}
+                                                      </TableCell>
+                                                       <TableCell className="text-right pr-0 py-1">
+                                                          {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
+                                                      </TableCell>
+                                                  </TableRow>
+                                              </TableBody>
+                                          </Table>
+                                      </div>
                                   </div>
                              </div>
                          )}
 
+                           {/* Phase 3: Pairwise Comparisons (Grouped by Reference Category) */}
+                           {reportResults?.pairwiseResultsMatrix && groupNames.length > 0 && reportResults.overallStats && (
+                               <div className="space-y-4">
+                                   <h3 className="text-lg font-semibold text-secondary-foreground mb-2">
+                                       Pairwise Chi-Square Comparisons with Bonferroni Correction
+                                   </h3>
+                                   <p className="text-xs text-muted-foreground">
+                                       P-values corrected using Bonferroni method (critical α = {formatDecimal(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 4)}).
+                                       Significant p-values (less than critical α) are highlighted in <span className="text-destructive font-semibold">red</span>.
+                                   </p>
 
-                         {/* Phase 3: Pairwise Comparisons Matrix */}
-                         {reportResults?.pairwiseResultsMatrix && groupNames.length > 0 && reportResults.overallStats && (
-                             <div className="space-y-2">
-                                 <h3 className="text-lg font-semibold text-secondary-foreground">P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction</h3>
-                                 <div className="overflow-x-auto rounded-md border">
-                                     <Table className="min-w-full divide-y divide-gray-200">
-                                          <TableHeader className="bg-gray-800">
-                                             <TableRow className="hover:bg-gray-700">
-                                                 <TableHead className="py-2 px-3 text-left text-xs font-medium text-white uppercase tracking-wider sticky left-0 bg-gray-800 z-10">Comparison</TableHead> {/* Sticky Header */}
-                                                 {groupNames.map(colName => (
-                                                     <TableHead key={colName} className="py-2 px-3 text-center text-xs font-medium text-white uppercase tracking-wider whitespace-nowrap">{colName}</TableHead>
-                                                 ))}
-                                             </TableRow>
-                                         </TableHeader>
-                                         <TableBody className="bg-white divide-y divide-gray-200">
-                                             {groupNames.map((rowName) => (
-                                                 <TableRow key={rowName} className="hover:bg-gray-50">
-                                                     <TableCell className="py-2 px-3 text-sm font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-white z-10">{rowName}</TableCell> {/* Sticky Cell */}
-                                                     {groupNames.map((colName) => {
-                                                          const pValue = reportResults.pairwiseResultsMatrix?.[rowName]?.[colName];
-                                                          const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < (reportResults.overallStats?.limitAlpha ?? 0.05);
-                                                          const isDiagonal = rowName === colName;
-                                                          const isEmptyCell = typeof pValue !== 'number' || isNaN(pValue) || groupNames.indexOf(rowName) > groupNames.indexOf(colName); // Only fill upper triangle + diagonal
+                                   {groupNames.map((referenceName) => (
+                                       <div key={referenceName} className="space-y-2 p-4 border rounded-md bg-card">
+                                           <h4 className="text-md font-semibold text-secondary-foreground">
+                                               Comparisons Against: <span className="text-primary">{referenceName}</span>
+                                           </h4>
+                                           <div className="overflow-x-auto">
+                                               <Table>
+                                                   <TableHeader>
+                                                       <TableRow className="border-b hover:bg-muted/50">
+                                                           <TableHead className="pl-0">Comparison Category</TableHead>
+                                                           <TableHead className="text-right pr-0">Corrected P-Value</TableHead>
+                                                            <TableHead className="text-right pr-0">Interpretation</TableHead>
+                                                       </TableRow>
+                                                   </TableHeader>
+                                                   <TableBody>
+                                                       {groupNames
+                                                            .filter(compareName => compareName !== referenceName) // Exclude self-comparison
+                                                            .sort() // Optional: sort comparison categories alphabetically
+                                                            .map((compareName) => {
+                                                                const pValue = reportResults.pairwiseResultsMatrix?.[referenceName]?.[compareName];
+                                                                const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / (reportResults.overallStats?.numComparisons ?? 1);
+                                                                const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < correctedAlpha;
 
-                                                          return (
-                                                               <TableCell
-                                                                   key={`${rowName}-${colName}`}
-                                                                   className={cn(
-                                                                       "py-2 px-3 text-sm text-center whitespace-nowrap",
-                                                                        isSignificant ? 'text-destructive font-semibold' : 'text-gray-700',
-                                                                        isDiagonal ? 'bg-gray-200' : '', // Style diagonal
-                                                                        isEmptyCell && !isDiagonal ? 'bg-gray-50' : '', // Style lower triangle differently
-                                                                   )}
-                                                               >
-                                                                  {isEmptyCell && !isDiagonal ? '' : formatScientific(pValue)}
-                                                               </TableCell>
-                                                          );
-                                                      })}
-                                                 </TableRow>
-                                             ))}
-                                         </TableBody>
-                                     </Table>
-                                 </div>
-                                 <p className="text-xs text-muted-foreground pt-1">
-                                     P-values are corrected using Bonferroni method (α = {formatDecimal(reportResults.overallStats.limitAlpha, 4)}).
-                                     Significant p-values (less than α) are highlighted in <span className="text-destructive font-semibold">red</span>.
-                                     Diagonal represents self-comparison (p=1.0). Lower triangle is omitted for symmetry.
-                                 </p>
-                             </div>
-                         )}
+                                                                return (
+                                                                    <TableRow key={`${referenceName}-vs-${compareName}`} className="hover:bg-muted/50">
+                                                                        <TableCell className="font-medium pl-0 py-1">{compareName}</TableCell>
+                                                                        <TableCell className={cn(
+                                                                            "text-right pr-0 py-1",
+                                                                            isSignificant ? 'text-destructive font-semibold' : 'text-gray-700'
+                                                                        )}>
+                                                                            {formatScientific(pValue)}
+                                                                        </TableCell>
+                                                                         <TableCell className="text-right pr-0 py-1">
+                                                                            {renderInterpretation(pValue, correctedAlpha)}
+                                                                         </TableCell>
+                                                                    </TableRow>
+                                                                );
+                                                            })}
+                                                   </TableBody>
+                                               </Table>
+                                           </div>
+                                       </div>
+                                   ))}
+                               </div>
+                           )}
+
 
                          {!reportResults && !calculationError && (
                              <p className="text-center text-muted-foreground">Generate a report to see the results here.</p>
@@ -650,18 +648,4 @@ export default function DisparityCalculator() {
          </TabsContent>
      </Tabs>
  );
-}
-
-// Helper function to safely get values from the report - Can be expanded
-function getReportValue<T>(data: MultiComparisonResults | null, path: string, defaultValue: T): T {
-    if (!data) return defaultValue;
-    const keys = path.split('.');
-    let current: any = data;
-    for (const key of keys) {
-        if (current === null || current === undefined || !current.hasOwnProperty(key)) {
-            return defaultValue;
-        }
-        current = current[key];
-    }
-    return current !== undefined ? current : defaultValue;
 }
