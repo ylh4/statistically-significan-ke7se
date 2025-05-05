@@ -128,9 +128,13 @@ export default function DisparityCalculator() {
               form.setValue('alpha', value as any, { shouldValidate: true });
           }
       }
-      // Clear results when alpha changes
-      setReportResults(null);
-      setCalculationError(null);
+      // Trigger calculation when alpha changes if results exist
+      if (reportResults) {
+         form.handleSubmit(onSubmit)(); // Re-run calculation
+      } else {
+         // Only clear errors if results don't exist yet
+         setCalculationError(null);
+      }
   };
 
    // Effect to update reference categories if group names change or groups are removed
@@ -410,7 +414,7 @@ export default function DisparityCalculator() {
                                      {...form.register("alpha")}
                                      value={form.watch('alpha')} // Ensure input reflects form state including empty string
                                      onChange={handleAlphaChange}
-                                     className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
+                                     className={cn("border", form.formState.errors.alpha ? "border-destructive" : "border-input-border")}
                                      placeholder="e.g., 0.05"
                                  />
                                  <TooltipProvider>
@@ -442,7 +446,7 @@ export default function DisparityCalculator() {
                                              <Input
                                                  id={`groups.${index}.name`}
                                                  {...form.register(`groups.${index}.name`)}
-                                                 className={cn(form.formState.errors.groups?.[index]?.name ? "border-destructive" : "")}
+                                                 className={cn("border", form.formState.errors.groups?.[index]?.name ? "border-destructive" : "border-input-border")}
                                                   onChange={(e) => {
                                                      // Update the specific field value
                                                      form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
@@ -463,7 +467,7 @@ export default function DisparityCalculator() {
                                                  min="0"
                                                  step="1"
                                                  {...form.register(`groups.${index}.experienced`)}
-                                                 className={cn(form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "")}
+                                                 className={cn("border", form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input-border")}
                                                  onChange={(e) => {
                                                      form.setValue(`groups.${index}.experienced`, e.target.value as any, { shouldValidate: true });
                                                      setReportResults(null);
@@ -481,7 +485,7 @@ export default function DisparityCalculator() {
                                                  min="0"
                                                  step="1"
                                                  {...form.register(`groups.${index}.notExperienced`)}
-                                                 className={cn(form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "")}
+                                                 className={cn("border", form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "border-input-border")}
                                                   onChange={(e) => {
                                                       form.setValue(`groups.${index}.notExperienced`, e.target.value as any, { shouldValidate: true });
                                                       setReportResults(null);
@@ -561,8 +565,12 @@ export default function DisparityCalculator() {
                                                                  // Don't update field.onChange if validation fails
                                                              } else {
                                                                   field.onChange(newValues);
-                                                                  setReportResults(null); // Clear results when selection changes
-                                                                  setCalculationError(null);
+                                                                  // Trigger calculation if results already exist
+                                                                   if (reportResults) {
+                                                                       form.handleSubmit(onSubmit)();
+                                                                   } else {
+                                                                       setCalculationError(null); // Clear error if no results yet
+                                                                   }
                                                              }
                                                          }}
                                                      />
@@ -711,7 +719,7 @@ export default function DisparityCalculator() {
                                                       <TableHead className="pl-0">Test</TableHead>
                                                       <TableHead className="text-right">Statistic</TableHead>
                                                       <TableHead className="text-right">P-Value</TableHead>
-                                                      <TableHead className="text-right pr-0">Interpretation (vs α)</TableHead> {/* Clarified interpretation context */}
+                                                      <TableHead className="text-right pr-0">Interpretation (vs α)</TableHead>{/* Clarified interpretation context */}
                                                   </TableRow>
                                               </TableHeader>
                                               <TableBody>
@@ -782,7 +790,7 @@ export default function DisparityCalculator() {
                                                        <TableRow className="border-b hover:bg-muted/50">
                                                            <TableHead className="pl-0">Comparison Category</TableHead>
                                                            <TableHead className="text-right pr-0">Corrected P-Value</TableHead>
-                                                           <TableHead className="text-right pr-0">Interpretation (vs Bonf. α)</TableHead> {/* Clarified interpretation */}
+                                                           <TableHead className="text-right pr-0">Interpretation (vs Bonf. α)</TableHead>{/* Clarified interpretation */}
                                                        </TableRow>
                                                    </TableHeader>
                                                    <TableBody>
