@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { FormEvent } from 'react';
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox"; // Import Checkbox
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"; // Added TableFooter
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, FileDown, FileText, Info } from 'lucide-react';
@@ -110,42 +111,55 @@ export default function DisparityCalculator() {
   // Handler for Alpha input change
   const handleAlphaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value;
-      // Allow empty input temporary, validation handles the rest
-      if (value === '') {
-         form.setValue('alpha', '' as any, { shouldValidate: true });
-      } else {
-          const numValue = parseFloat(value);
-          // Only set if it's a potentially valid number, let zod handle range
-          if (!isNaN(numValue)) {
-              form.setValue('alpha', numValue, { shouldValidate: true });
-          } else {
-              // If input is not a number (e.g., "abc"), keep it in input but mark as invalid
-              form.setValue('alpha', value as any, { shouldValidate: true });
-          }
-      }
-      // Trigger calculation when alpha changes if results exist
-      if (reportResults) {
-         // Use handleSubmit to ensure data is valid before recalculating
-         form.handleSubmit(onSubmit)();
-      } else {
-         // Only clear errors if results don't exist yet
-         setCalculationError(null);
-      }
+      let numValue = parseFloat(value);
+
+       // Enforce range limits directly for better UX than just validation message
+        if (!isNaN(numValue)) {
+            if (numValue <= 0) numValue = 0.00000001; // Set to a very small positive number if <= 0
+            if (numValue > 1) numValue = 1; // Cap at 1
+            form.setValue('alpha', numValue, { shouldValidate: true });
+        } else if (value === '') {
+            // Allow temporary empty state, validation will catch it if submitted
+            form.setValue('alpha', '' as any, { shouldValidate: true });
+        } else {
+            // If input is not a number (e.g., "abc"), keep it in input but mark as invalid
+            form.setValue('alpha', value as any, { shouldValidate: true });
+        }
+
+
+      // Trigger calculation when alpha changes if results exist AND form is valid
+      // Check validity specifically for alpha after setting it
+       form.trigger('alpha').then(isValid => {
+            if (isValid && reportResults) {
+                // Use handleSubmit to ensure data is valid before recalculating
+                form.handleSubmit(onSubmit)();
+            } else if (!reportResults) {
+                // Only clear errors if results don't exist yet
+                setCalculationError(null);
+            } else {
+                // If alpha is now invalid, show validation message but don't clear results yet
+                 setCalculationError(form.formState.errors.alpha?.message || null);
+            }
+       });
   };
+
 
    // Effect to update reference categories if group names change or groups are removed
   useEffect(() => {
     const currentReferences = form.getValues('referenceCategories') || [];
-    const validReferences = currentReferences.filter(ref => groupNames.includes(ref));
+    const currentGroupNames = form.getValues('groups').map(g => g.name).filter(Boolean); // Get current names
+    const validReferences = currentReferences.filter(ref => currentGroupNames.includes(ref));
 
-    // Only try to auto-select if there are groups available
-    if (validReferences.length === 0 && groupNames.length > 0) {
-        // If all selected references are gone OR none were selected yet, select the first available group
-        form.setValue('referenceCategories', [groupNames[0]], { shouldValidate: true });
-    } else if (validReferences.length !== currentReferences.length) {
-         // If some (but not all) are gone, update the list to only valid ones
+    // Only update if the valid list differs from the current list
+    if (JSON.stringify(validReferences) !== JSON.stringify(currentReferences)) {
          form.setValue('referenceCategories', validReferences, { shouldValidate: true });
     }
+
+     // Auto-select the first group ONLY if no references are selected AND there's at least one group
+     if (validReferences.length === 0 && currentGroupNames.length > 0) {
+         form.setValue('referenceCategories', [currentGroupNames[0]], { shouldValidate: true });
+     }
+
 
     // Clear results if groups change substantially (add/remove/rename)
     // We might want finer control, but this is safer for now.
@@ -155,7 +169,7 @@ export default function DisparityCalculator() {
     // Trigger validation for referenceCategories when group names change
     form.trigger('referenceCategories');
 
-  }, [groupNames, form]);
+  }, [groupNames, form]); // Depend on groupNames derived from watched fields
 
 
   // Main calculation submission handler
@@ -178,7 +192,9 @@ export default function DisparityCalculator() {
           });
           setActiveTab("input"); // Stay on input tab
           // Attempt to select the first group if none are selected
-           form.setValue('referenceCategories', [currentGroupNames[0]], { shouldValidate: true });
+          if (currentGroupNames.length > 0) {
+            form.setValue('referenceCategories', [currentGroupNames[0]], { shouldValidate: true });
+          }
           return; // Stop submission
      }
      // Check if previously selected references are now invalid
@@ -198,7 +214,7 @@ export default function DisparityCalculator() {
 
 
     try {
-      // Use the calculation function (doesn't need referenceCategories directly)
+      // Use the calculation function
       const results = performMultiComparisonReport({
         alpha: data.alpha,
         groups: data.groups,
@@ -207,22 +223,47 @@ export default function DisparityCalculator() {
       setReportResults(results); // Store the entire results object
 
         if (results.errors && results.errors.length > 0) {
-            const errorMsg = results.errors.join('; ');
-             setCalculationError(`Calculation completed with warnings: ${errorMsg}`);
-             toast({
-                 title: "Calculation Warning",
-                 description: errorMsg,
-                 variant: "destructive",
-                 duration: 10000,
-             });
+             // Filter out warnings about expected counts < 5 for the main error state
+            const criticalErrors = results.errors.filter(e => !e.toLowerCase().includes('expected count less than 5'));
+            const warningErrors = results.errors.filter(e => e.toLowerCase().includes('expected count less than 5'));
+
+             if (criticalErrors.length > 0) {
+                const errorMsg = criticalErrors.join('; ');
+                 setCalculationError(`Calculation failed: ${errorMsg}`);
+                 toast({
+                     title: "Calculation Failed",
+                     description: errorMsg,
+                     variant: "destructive",
+                     duration: 10000,
+                 });
+             } else if (warningErrors.length > 0) {
+                 const warningMsg = warningErrors.join('; ');
+                 // Set a non-blocking error state for warnings
+                  setCalculationError(`Calculation completed with warnings: ${warningMsg}`);
+                  toast({
+                      title: "Calculation Warning",
+                      description: warningMsg,
+                      variant: "destructive", // Keep variant destructive for visibility
+                      duration: 7000, // Shorter duration for warnings
+                  });
+                  setActiveTab("report"); // Still go to report tab for warnings
+             } else {
+                 // Should not happen if results.errors is not empty, but handle defensively
+                 toast({
+                     title: "Calculation Successful",
+                     description: "Statistical report has been generated.",
+                 });
+                  setActiveTab("report");
+             }
+
         } else {
             toast({
                 title: "Calculation Successful",
                 description: "Statistical report has been generated.",
             });
+             setActiveTab("report");
         }
 
-         setActiveTab("report");
 
     } catch (error: any) {
       console.error("Calculation failed:", error);
@@ -233,6 +274,7 @@ export default function DisparityCalculator() {
             description: errorMessage,
             variant: "destructive",
        });
+        setActiveTab("input"); // Stay on input tab on critical failure
     }
   };
 
@@ -265,7 +307,6 @@ export default function DisparityCalculator() {
      }
    try {
        // Pass reportResults and the current form values (including reference selection)
-       // Need to cast FormValues to ExportFormValues if they differ slightly, otherwise use directly
        exportToCSV(reportResults, form.getValues() as ExportFormValues, `statistical-report_${Date.now()}.csv`);
         toast({
            title: "Export Successful",
@@ -333,6 +374,10 @@ export default function DisparityCalculator() {
              useCORS: true, // If using external images/fonts
              logging: false, // Disable html2canvas logging in production
              backgroundColor: '#ffffff', // Set explicit background
+              scrollX: 0, // Ensure capture starts from the left edge
+              scrollY: 0, // Ensure capture starts from the top edge
+              windowWidth: currentReportElement.scrollWidth, // Capture full width
+              windowHeight: currentReportElement.scrollHeight, // Capture full height
         });
 
        const imgData = canvas.toDataURL('image/png');
@@ -387,14 +432,33 @@ export default function DisparityCalculator() {
 
  // Get selected reference categories from form state
  const selectedReferenceCategories = form.watch('referenceCategories') || [];
+ const currentAlpha = form.watch('alpha'); // Watch alpha for interpretations
+
 
  // Helper to render the interpretation text with icon
- const renderInterpretation = (p: number | null | undefined, alpha: number) => {
-    if (p === null || p === undefined || isNaN(p)) return null;
+  const renderInterpretation = (
+    p: number | null | undefined,
+    alpha: number,
+    isBonferroni: boolean = false // Flag for Bonferroni interpretation
+  ) => {
+    if (p === null || p === undefined || isNaN(p)) return <span className="text-xs italic text-muted-foreground">N/A</span>;
+
     const isSignificant = p < alpha;
+    const interpretationText = isSignificant
+        ? "Statistically different."
+        : "Not statistically different.";
+
+    const followUpText = isSignificant
+        ? " Potential racial disparity; pursue further investigation." // Standard follow-up
+        : "";
+
+    const fullText = interpretationText + (isSignificant ? followUpText : "");
+
+
     return (
          <span className={cn("ml-2 text-xs italic", isSignificant ? "text-destructive font-semibold" : "text-muted-foreground")}>
-             {isSignificant ? "Statistically different" : "Not statistically different"}
+              {fullText}
+              {/* Optional: Add icon or specific marker */}
          </span>
      );
  };
@@ -410,7 +474,6 @@ export default function DisparityCalculator() {
          {/* Input Tab */}
          <TabsContent value="input">
              <Card className="w-full max-w-5xl mx-auto shadow-lg mt-4">
-                 {/* Removed duplicate Toaster */}
                  <CardHeader>
                      <CardTitle className="text-2xl text-secondary-foreground">Input Parameters</CardTitle>
                  </CardHeader>
@@ -423,10 +486,12 @@ export default function DisparityCalculator() {
                                  <Input
                                      id="alpha"
                                      type="number"
-                                     step="any"
+                                     step="any" // Use 'any' for floating point
+                                     min="0.00000001" // Smallest positive value (approx)
+                                     max="1"
                                      // Use spread for register, but keep explicit onChange for clearing results
                                      {...form.register("alpha")}
-                                     value={form.watch('alpha')} // Ensure input reflects form state including empty string
+                                     value={form.watch('alpha')} // Ensure input reflects form state including empty string and clamped values
                                      onChange={handleAlphaChange}
                                      className={cn("border", form.formState.errors.alpha ? "border-destructive" : "border-input")}
                                      placeholder="e.g., 0.05"
@@ -472,7 +537,7 @@ export default function DisparityCalculator() {
                                                      // Clear results and trigger reference validation
                                                      setReportResults(null);
                                                      setCalculationError(null);
-                                                     // No need to trigger ref validation here, useEffect handles it
+                                                     // useEffect handles reference updates/validation
                                                   }}
                                              />
                                              {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
@@ -491,6 +556,7 @@ export default function DisparityCalculator() {
                                                      form.setValue(`groups.${index}.experienced`, e.target.value as any, { shouldValidate: true });
                                                      setReportResults(null);
                                                      setCalculationError(null);
+                                                      if (reportResults) form.handleSubmit(onSubmit)(); // Recalculate if results exist
                                                  }}
                                              />
                                              {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
@@ -509,6 +575,7 @@ export default function DisparityCalculator() {
                                                       form.setValue(`groups.${index}.notExperienced`, e.target.value as any, { shouldValidate: true });
                                                       setReportResults(null);
                                                       setCalculationError(null);
+                                                       if (reportResults) form.handleSubmit(onSubmit)(); // Recalculate if results exist
                                                   }}
                                              />
                                              {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
@@ -524,8 +591,8 @@ export default function DisparityCalculator() {
                                              setCalculationError(null);
                                              // useEffect handles reference updates
                                           }}
-                                         // Only disable remove if 0 or 1 category exists (need 2 minimum for validation)
-                                         disabled={fields.length <= 0}
+                                         // Only disable remove if 0 groups exist (let validation handle min 2)
+                                          disabled={fields.length <= 0}
                                          className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
                                          aria-label="Remove category"
                                      >
@@ -574,6 +641,7 @@ export default function DisparityCalculator() {
                                                      <Checkbox
                                                          id={`ref-${name}`}
                                                          checked={field.value?.includes(name)}
+                                                         disabled={groupNames.length < 2} // Disable if less than 2 groups
                                                          onCheckedChange={(checked) => {
                                                              const currentValues = field.value || [];
                                                              let newValues;
@@ -593,16 +661,23 @@ export default function DisparityCalculator() {
                                                                  // Don't update field.onChange if validation fails
                                                              } else {
                                                                   field.onChange(newValues);
-                                                                  // Trigger calculation if results already exist
+                                                                  // Trigger calculation if results already exist AND form is valid
                                                                    if (reportResults) {
-                                                                        form.handleSubmit(onSubmit)(); // Re-run calc
+                                                                       // Use handleSubmit to ensure validity before re-calculating
+                                                                        form.handleSubmit(onSubmit)();
                                                                    } else {
                                                                        setCalculationError(null); // Clear error if no results yet
                                                                    }
                                                              }
                                                          }}
                                                      />
-                                                     <Label htmlFor={`ref-${name}`} className="font-normal cursor-pointer">
+                                                     <Label
+                                                         htmlFor={`ref-${name}`}
+                                                         className={cn(
+                                                             "font-normal cursor-pointer",
+                                                             groupNames.length < 2 ? "text-muted-foreground cursor-not-allowed" : ""
+                                                         )}
+                                                     >
                                                          {name}
                                                      </Label>
                                                  </div>
@@ -661,20 +736,14 @@ export default function DisparityCalculator() {
                       </CardHeader>
 
                      <CardContent className="space-y-6 pt-4">
-                         {calculationError && !reportResults && ( // Only show error if no results are displayed
+                         {/* Display calculation errors/warnings */}
+                          {calculationError && (
                              <Alert variant="destructive" className="w-full mb-4">
                                  <AlertCircle className="h-4 w-4" />
-                                 <AlertTitle>Error</AlertTitle>
+                                 <AlertTitle>{calculationError.toLowerCase().includes('warning') ? "Warning" : "Error"}</AlertTitle>
                                  <AlertDescription>{calculationError}</AlertDescription>
                              </Alert>
-                         )}
-                         {calculationError && reportResults && ( // Show as warning if results exist but have issues
-                              <Alert variant="destructive" className="w-full mb-4">
-                                  <AlertCircle className="h-4 w-4" />
-                                  <AlertTitle>Calculation Warning</AlertTitle>
-                                  <AlertDescription>{calculationError}</AlertDescription>
-                              </Alert>
-                         )}
+                          )}
 
 
                         {/* Display Input Parameters in Report */}
@@ -690,31 +759,66 @@ export default function DisparityCalculator() {
 
 
                          {/* Phase 1: Contingency Table Summary */}
-                         {reportResults?.contingencySummary && reportResults.contingencySummary.length > 0 && (
+                          {reportResults?.contingencySummary && reportResults.contingencySummary.length > 0 && reportResults.totals && (
                              <div className="space-y-2">
                                  <h3 className="text-lg font-semibold text-secondary-foreground mb-2">Contingency Table Summary</h3>
                                  <div className="overflow-x-auto rounded-md border">
                                      <Table>
                                          <TableHeader className="table-header-dark">
                                              <TableRow className="hover:bg-table-header-bg/90">
-                                                 <TableHead>Category (Race)</TableHead>
-                                                 <TableHead className="text-right"># Did NOT Experience</TableHead>
-                                                 <TableHead className="text-right"># Experienced</TableHead>
-                                                 <TableHead className="text-right">Row Subtotal</TableHead>
-                                                 <TableHead className="text-right">% Experienced</TableHead>
+                                                  {/* Row Header */}
+                                                  <TableHead rowSpan={2} className="align-bottom pb-2">Category (Race)</TableHead>
+                                                  {/* Observed Columns */}
+                                                  <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
+                                                  {/* Expected Columns */}
+                                                  <TableHead colSpan={2} className="text-center border-r">% Experienced</TableHead>
+                                                  <TableHead colSpan={2} className="text-center">Expected</TableHead>
                                              </TableRow>
+                                              <TableRow className="hover:bg-table-header-bg/90">
+                                                   {/* Observed Sub-headers */}
+                                                   <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
+                                                   <TableHead className="text-right"># Experienced</TableHead>
+                                                   <TableHead className="text-right border-r">Row Subtotal</TableHead>
+                                                    {/* % Experienced Sub-header */}
+                                                   <TableHead className="text-right border-r">% Experienced</TableHead>
+                                                   {/* Expected Sub-headers */}
+                                                   <TableHead className="text-right"># Did NOT Experience</TableHead>
+                                                   <TableHead className="text-right"># Experienced</TableHead>
+                                              </TableRow>
                                          </TableHeader>
                                          <TableBody>
                                              {reportResults.contingencySummary.map((row, index) => (
                                                  <TableRow key={row.name} className={cn("table-row-alt", "hover:bg-muted/50")}>
-                                                     <TableCell className="font-medium py-2 px-4">{row.name}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.notExperienced.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{row.rowTotal.toLocaleString()}</TableCell>
-                                                     <TableCell className="text-right py-2 px-4 table-cell-tint">{formatPercent(row.percentExperienced)}</TableCell>
+                                                      {/* Category Name */}
+                                                      <TableCell className="font-medium py-2 px-4">{row.name}</TableCell>
+                                                      {/* Observed */}
+                                                      <TableCell className="text-right py-2 px-4 table-cell-tint border-l">{row.notExperienced.toLocaleString()}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{row.rowTotal.toLocaleString()}</TableCell>
+                                                      {/* Percent */}
+                                                      <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{formatPercent(row.percentExperienced)}</TableCell>
+                                                      {/* Expected */}
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell>
                                                  </TableRow>
                                              ))}
                                          </TableBody>
+                                         <TableFooter>
+                                               <TableRow className="bg-muted/80 font-semibold hover:bg-muted">
+                                                    <TableCell className="py-2 px-4">Column Subtotal</TableCell>
+                                                    {/* Observed Totals */}
+                                                    <TableCell className="text-right py-2 px-4 border-l">{reportResults.totals.totalNotExperienced.toLocaleString()}</TableCell>
+                                                    <TableCell className="text-right py-2 px-4">{reportResults.totals.totalExperienced.toLocaleString()}</TableCell>
+                                                    <TableCell className="text-right py-2 px-4 border-r">{reportResults.totals.grandTotal.toLocaleString()}</TableCell>
+                                                    {/* % Total - Blank or Overall % */}
+                                                     <TableCell className="text-right py-2 px-4 border-r">
+                                                        {reportResults.totals.grandTotal > 0 ? formatPercent((reportResults.totals.totalExperienced / reportResults.totals.grandTotal) * 100) : 'N/A'}
+                                                     </TableCell>
+                                                    {/* Expected Totals */}
+                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedNotExperienced, 1)}</TableCell>
+                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedExperienced, 1)}</TableCell>
+                                               </TableRow>
+                                          </TableFooter>
                                      </Table>
                                  </div>
                              </div>
@@ -744,7 +848,7 @@ export default function DisparityCalculator() {
                                            {reportResults.overallStats.numComparisons > 0 && (
                                                 <div className="flex justify-between">
                                                     <span className="font-medium">Bonferroni Corrected α:</span>
-                                                    <span>{formatDecimal(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 4)}</span>
+                                                     <span>{formatScientific(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 3)}</span>
                                                 </div>
                                            )}
                                            {reportResults.overallStats.numComparisons <= 0 && (
@@ -756,119 +860,104 @@ export default function DisparityCalculator() {
                                       </div>
 
                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2">
-                                          <Table>
-                                              <TableHeader>
-                                                  <TableRow className="border-b-0">
-                                                      <TableHead className="pl-0">Test</TableHead>
-                                                      <TableHead className="text-right">Statistic</TableHead>
-                                                      <TableHead className="text-right">P-Value</TableHead>
-                                                      <TableHead className="text-right pr-0">Interpretation (vs α)</TableHead>{/* Clarified interpretation context */}
-                                                  </TableRow>
-                                              </TableHeader>
-                                              <TableBody>
-                                                  {/* Chi-square */}
-                                                  <TableRow className="hover:bg-transparent">
-                                                      <TableCell className="font-medium pl-0 py-1">Chi-square</TableCell>
-                                                      <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</TableCell>
-                                                      <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                          {formatScientific(reportResults.overallStats.chiSquare.pValue)}
-                                                      </TableCell>
-                                                       <TableCell className="text-right pr-0 py-1">
-                                                           {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
-                                                       </TableCell>
-                                                  </TableRow>
-                                                  {/* Chi-square (Yates) */}
-                                                   <TableRow className="hover:bg-transparent">
-                                                      <TableCell className="font-medium pl-0 py-1">Chi-square (Yates)</TableCell>
-                                                       <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</TableCell>
-                                                       <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                          {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
-                                                      </TableCell>
-                                                       <TableCell className="text-right pr-0 py-1">
-                                                            {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
-                                                        </TableCell>
-                                                  </TableRow>
-                                                  {/* G-Test */}
-                                                  <TableRow className="hover:bg-transparent">
-                                                      <TableCell className="font-medium pl-0 py-1">G-Test</TableCell>
-                                                      <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.gTest.statistic)}</TableCell>
-                                                      <TableCell className={cn("text-right py-1", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                          {formatScientific(reportResults.overallStats.gTest.pValue)}
-                                                      </TableCell>
-                                                       <TableCell className="text-right pr-0 py-1">
-                                                          {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
-                                                      </TableCell>
-                                                  </TableRow>
-                                              </TableBody>
-                                          </Table>
+                                           {/* Use a simplified table for better alignment */}
+                                          <div className="grid grid-cols-[max-content_1fr_1fr_max-content] gap-x-4 gap-y-1 text-sm"> {/* Adjusted grid columns */}
+                                               {/* Headers */}
+                                               <div className="font-medium pl-0">Test</div>
+                                               <div className="font-medium text-right">Statistic</div>
+                                               <div className="font-medium text-right">P-Value</div>
+                                               <div className="font-medium text-right pr-0">Interpretation (vs α)</div>{/* Clarified interpretation context */}
+
+                                               {/* Chi-square */}
+                                               <div className="font-medium pl-0">Chi-square</div>
+                                               <div className="text-right">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</div>
+                                               <div className={cn("text-right", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                   {formatScientific(reportResults.overallStats.chiSquare.pValue)}
+                                               </div>
+                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
+                                                    {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
+                                                </div>
+
+                                               {/* Chi-square (Yates) */}
+                                               <div className="font-medium pl-0">Chi-square (Yates)</div>
+                                               <div className="text-right">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</div>
+                                               <div className={cn("text-right", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                   {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
+                                               </div>
+                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
+                                                     {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
+                                                 </div>
+
+                                               {/* G-Test */}
+                                               <div className="font-medium pl-0">G-Test</div>
+                                               <div className="text-right">{formatDecimal(reportResults.overallStats.gTest.statistic)}</div>
+                                               <div className={cn("text-right", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                   {formatScientific(reportResults.overallStats.gTest.pValue)}
+                                               </div>
+                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
+                                                   {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
+                                               </div>
+                                          </div>
                                       </div>
                                   </div>
                              </div>
                          )}
 
-                           {/* Phase 3: Pairwise Comparisons (Filtered by Selected References) */}
-                           {reportResults?.pairwiseResultsMatrix && reportResults?.contingencySummary && reportResults.overallStats && reportResults.overallStats.numComparisons > 0 && selectedReferenceCategories.length > 0 && (
-                               <div className="space-y-4">
-                                   <h3 className="text-lg font-semibold text-secondary-foreground mb-2">
-                                       Pairwise Chi-Square Comparisons with Bonferroni Correction
-                                   </h3>
-                                   <p className="text-xs text-muted-foreground">
-                                       Displaying comparisons against selected reference category(ies).
-                                       P-values corrected using Bonferroni method (critical α = {formatDecimal(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 4)}).
-                                       Significant p-values (less than critical α) are highlighted in <span className="text-destructive font-semibold">red</span>.
-                                   </p>
+                            {/* Phase 3: Pairwise Comparisons Matrix */}
+                           {reportResults?.pairwiseResultsMatrix && reportResults?.contingencySummary && reportResults.overallStats && reportResults.overallStats.numComparisons > 0 && reportResults.contingencySummary.length >= 2 && (
+                                <div className="space-y-4">
+                                    <h3 className="text-lg font-semibold text-secondary-foreground mb-2">
+                                        P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction
+                                    </h3>
+                                    <p className="text-xs text-muted-foreground">
+                                        Corrected P-values shown below. The critical alpha for significance is α_bonf = {formatScientific(reportResults.overallStats.limitAlpha / reportResults.overallStats.numComparisons, 3)}.
+                                        Significant p-values (&lt; α_bonf) are highlighted in <span className="text-destructive font-semibold">red</span>.
+                                    </p>
 
-                                   {/* Iterate through selected reference categories only */}
-                                   {selectedReferenceCategories
-                                        .filter(refName => reportResults.contingencySummary.some(g => g.name === refName)) // Ensure ref exists
-                                        .sort() // Optional: sort reference groups alphabetically
-                                        .map((referenceName) => (
-                                       <div key={referenceName} className="space-y-2 p-4 border rounded-md bg-card">
-                                           <h4 className="text-md font-semibold text-secondary-foreground">
-                                               Comparisons Against: <span className="text-primary">{referenceName}</span>
-                                           </h4>
-                                           <div className="overflow-x-auto">
-                                               <Table>
-                                                   <TableHeader>
-                                                       <TableRow className="border-b hover:bg-muted/50">
-                                                           <TableHead className="pl-0">Comparison Category</TableHead>
-                                                           <TableHead className="text-right pr-0">Corrected P-Value</TableHead>
-                                                           <TableHead className="text-right pr-0">Interpretation (vs Bonf. α)</TableHead>{/* Clarified interpretation */}
-                                                       </TableRow>
-                                                   </TableHeader>
-                                                   <TableBody>
-                                                       {/* Get all group names for comparison */}
-                                                       {reportResults.contingencySummary
-                                                            .map(g => g.name)
-                                                            .filter(compareName => compareName !== referenceName) // Exclude self-comparison
-                                                            .sort() // Optional: sort comparison categories alphabetically
-                                                            .map((compareName) => {
-                                                                const pValue = reportResults.pairwiseResultsMatrix?.[referenceName]?.[compareName];
-                                                                const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / (reportResults.overallStats?.numComparisons ?? 1);
-                                                                const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < correctedAlpha;
+                                    <div className="overflow-x-auto rounded-md border">
+                                        <Table>
+                                            <TableHeader className="table-header-dark">
+                                                <TableRow className="hover:bg-table-header-bg/90">
+                                                    <TableHead className="sticky left-0 bg-table-header z-10">Category</TableHead> {/* Sticky header */}
+                                                    {reportResults.contingencySummary.map(g => g.name).sort().map(name => (
+                                                        <TableHead key={name} className="text-right">{name}</TableHead>
+                                                    ))}
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {reportResults.contingencySummary.map(g => g.name).sort().map((rowName) => (
+                                                    <TableRow key={rowName} className="table-row-alt hover:bg-muted/50">
+                                                        <TableCell className="font-medium sticky left-0 bg-background z-10">{rowName}</TableCell> {/* Sticky cell */}
+                                                        {reportResults.contingencySummary.map(g => g.name).sort().map((colName) => {
+                                                            const pValue = reportResults.pairwiseResultsMatrix?.[rowName]?.[colName];
+                                                            const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / Math.max(1, reportResults.overallStats?.numComparisons ?? 1);
+                                                            const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < correctedAlpha;
+                                                            const isDiagonal = rowName === colName;
 
-                                                                return (
-                                                                    <TableRow key={`${referenceName}-vs-${compareName}`} className="hover:bg-muted/50">
-                                                                        <TableCell className="font-medium pl-0 py-1">{compareName}</TableCell>
-                                                                        <TableCell className={cn(
-                                                                            "text-right pr-0 py-1",
-                                                                            isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground' // Use muted for non-significant
-                                                                        )}>
-                                                                            {formatScientific(pValue)}
-                                                                        </TableCell>
-                                                                        <TableCell className="text-right pr-0 py-1">
-                                                                             {/* Use correctedAlpha for pairwise interpretation */}
-                                                                            {renderInterpretation(pValue, correctedAlpha)}
-                                                                         </TableCell>
-                                                                    </TableRow>
-                                                                );
-                                                            })}
-                                                   </TableBody>
-                                               </Table>
-                                           </div>
-                                       </div>
-                                   ))}
-                               </div>
+                                                            return (
+                                                                <TableCell
+                                                                    key={`${rowName}-vs-${colName}`}
+                                                                    className={cn(
+                                                                        "text-right py-2 px-4",
+                                                                        isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground',
+                                                                        isDiagonal ? 'bg-muted/30' : 'table-cell-tint', // Style diagonal differently
+                                                                    )}
+                                                                >
+                                                                     {formatScientific(pValue, 3)} {/* Always show formatted p-value */}
+                                                                    {/* Interpretation could be added via tooltip if needed */}
+                                                                </TableCell>
+                                                            );
+                                                        })}
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                     {/* Add interpretation notes based on significance */}
+                                      <p className="text-xs text-muted-foreground italic mt-2">
+                                        <span className="text-destructive font-semibold">Red bold text</span> indicates the pairwise difference is statistically significant (p &lt; α_bonf). Potential racial disparity between these two groups. Pursue further investigation.
+                                      </p>
+                                </div>
                            )}
 
 
@@ -885,3 +974,4 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
+

@@ -1,3 +1,4 @@
+
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import type { MultiComparisonResults } from "./calculations"; // Import necessary types
@@ -63,14 +64,16 @@ export function exportToCSV(
   csvRows.push(""); // Blank row
 
   // --- Contingency Table Summary Section ---
-  if (reportData.contingencySummary && reportData.contingencySummary.length > 0) {
+  if (reportData.contingencySummary && reportData.contingencySummary.length > 0 && reportData.totals) {
     csvRows.push("Contingency Table Summary");
     const summaryHeaders = [
       "Category",
-      "# Did NOT Experience",
-      "# Experienced",
-      "Row Subtotal",
-      "% Experienced"
+      "Observed: # Did NOT Experience",
+      "Observed: # Experienced",
+      "Observed: Row Subtotal",
+      "% Experienced",
+      "Expected: # Did NOT Experience",
+      "Expected: # Experienced",
     ];
     csvRows.push(summaryHeaders.join(','));
 
@@ -80,69 +83,92 @@ export function exportToCSV(
         escapeCSV(row.notExperienced),
         escapeCSV(row.experienced),
         escapeCSV(row.rowTotal),
-        escapeCSV(formatPercent(row.percentExperienced)) // Use formatter
+        escapeCSV(formatPercent(row.percentExperienced)), // Use formatter
+        escapeCSV(formatDecimal(row.expectedNotExperienced, 1)), // Use formatter
+        escapeCSV(formatDecimal(row.expectedExperienced, 1)), // Use formatter
       ];
       csvRows.push(values.join(','));
     });
+
+     // Add Totals Row
+     const totals = reportData.totals;
+     const totalRow = [
+        escapeCSV("Column Subtotal"),
+        escapeCSV(totals.totalNotExperienced),
+        escapeCSV(totals.totalExperienced),
+        escapeCSV(totals.grandTotal),
+        escapeCSV(totals.grandTotal > 0 ? formatPercent((totals.totalExperienced / totals.grandTotal) * 100) : 'N/A'),
+        escapeCSV(formatDecimal(totals.totalExpectedNotExperienced, 1)),
+        escapeCSV(formatDecimal(totals.totalExpectedExperienced, 1)),
+     ];
+     csvRows.push(totalRow.join(','));
+
     csvRows.push(""); // Blank row
   }
 
   // --- Overall Test Statistics Section ---
   if (reportData.overallStats) {
     const stats = reportData.overallStats;
+    const alpha = stats.limitAlpha; // Get alpha for interpretation
     csvRows.push("Overall Test Results");
-    csvRows.push(`Limit (Significance Level α),${escapeCSV(formatDecimal(stats.limitAlpha, 4))}`);
+    csvRows.push(`Limit (Significance Level α),${escapeCSV(formatDecimal(alpha, 4))}`);
     csvRows.push(`Degrees of Freedom,${escapeCSV(stats.degreesOfFreedom)}`);
     csvRows.push(`# of Pairwise Comparisons,${escapeCSV(stats.numComparisons)}`);
      // Add Bonferroni Corrected Alpha
+     let correctedAlpha = NaN;
      if (stats.numComparisons > 0) {
-        const correctedAlpha = stats.limitAlpha / stats.numComparisons;
-        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
+        correctedAlpha = alpha / stats.numComparisons;
+        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatScientific(correctedAlpha, 3))}`);
      } else {
         csvRows.push(`Bonferroni Corrected Alpha (α_bonf),N/A`);
      }
     csvRows.push(""); // separator
 
+     // Helper for interpretation string
+     const getInterpretation = (pValue: number | null | undefined, threshold: number) => {
+        if (pValue === null || pValue === undefined || isNaN(pValue)) return "N/A";
+        return pValue < threshold ? "Statistically different. Potential racial disparity; pursue further investigation." : "Not statistically different.";
+     };
+
     // Chi-square
     csvRows.push("Test,Statistic,P-Value,Interpretation (vs α)"); // Clarified interpretation
     csvRows.push(
-      `Chi-square,${escapeCSV(formatDecimal(stats.chiSquare.statistic))},${escapeCSV(formatScientific(stats.chiSquare.pValue))},${escapeCSV(stats.chiSquare.interpretation)}`
+      `Chi-square,${escapeCSV(formatDecimal(stats.chiSquare.statistic))},${escapeCSV(formatScientific(stats.chiSquare.pValue))},"${escapeCSV(getInterpretation(stats.chiSquare.pValue, alpha))}"`
     );
     // Chi-square (Yates)
      csvRows.push(
-       `Chi-square (Yates),${escapeCSV(formatDecimal(stats.chiSquareYates.statistic))},${escapeCSV(formatScientific(stats.chiSquareYates.pValue))},${escapeCSV(stats.chiSquareYates.interpretation)}`
+       `Chi-square (Yates),${escapeCSV(formatDecimal(stats.chiSquareYates.statistic))},${escapeCSV(formatScientific(stats.chiSquareYates.pValue))},"${escapeCSV(getInterpretation(stats.chiSquareYates.pValue, alpha))}"`
      );
     // G-Test
     csvRows.push(
-      `G-Test,${escapeCSV(formatDecimal(stats.gTest.statistic))},${escapeCSV(formatScientific(stats.gTest.pValue))},${escapeCSV(stats.gTest.interpretation)}`
+      `G-Test,${escapeCSV(formatDecimal(stats.gTest.statistic))},${escapeCSV(formatScientific(stats.gTest.pValue))},"${escapeCSV(getInterpretation(stats.gTest.pValue, alpha))}"`
     );
     csvRows.push(""); // Blank row
   }
 
   // --- Pairwise Comparisons Matrix Section ---
-  if (reportData.pairwiseResultsMatrix && groupNames.length > 0 && reportData.overallStats) {
+  if (reportData.pairwiseResultsMatrix && groupNames.length > 0 && reportData.overallStats && reportData.overallStats.numComparisons > 0) {
     csvRows.push("P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction");
      const correctedAlpha = reportData.overallStats.limitAlpha / reportData.overallStats.numComparisons;
-     // Redundant row removed - already included above
-     // csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
-     // csvRows.push(""); // Blank row
+     csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatScientific(correctedAlpha, 3))}`);
+     csvRows.push(""); // Blank row
 
 
     // Matrix Header Row
-    const matrixHeader = ["Category", ...groupNames.map(name => escapeCSV(name))];
+    const matrixHeader = ["Category", ...groupNames.sort().map(name => escapeCSV(name))]; // Sort names for consistent order
     csvRows.push(matrixHeader.join(','));
 
     // Matrix Data Rows
-    groupNames.forEach(rowName => {
+    groupNames.sort().forEach(rowName => { // Sort names for consistent order
       const rowValues = [escapeCSV(rowName)];
-      groupNames.forEach(colName => {
+      groupNames.sort().forEach(colName => { // Sort names for consistent order
         const pValue = reportData.pairwiseResultsMatrix?.[rowName]?.[colName];
         // Format p-value or indicate self/error
         let formattedPValue = "N/A"; // Default for errors or invalid
         if (rowName === colName) {
              formattedPValue = "1.000E+0"; // Or "-" or "" for diagonal
         } else if (pValue !== null && !isNaN(pValue as number)) {
-             formattedPValue = formatScientific(pValue as number);
+             formattedPValue = formatScientific(pValue as number, 3); // Use 3 sig digits
         }
         rowValues.push(escapeCSV(formattedPValue));
       });
@@ -155,6 +181,13 @@ export function exportToCSV(
         csvRows.push("Pairwise Interpretation (vs Selected References)");
          csvRows.push("Reference Category,Comparison Category,Corrected P-Value,Interpretation (vs α_bonf)");
 
+          // Helper for pairwise interpretation string
+          const getPairwiseInterpretation = (pValue: number | null | undefined, threshold: number) => {
+             if (pValue === null || pValue === undefined || isNaN(pValue)) return "N/A";
+             return pValue < threshold ? "Statistically different" : "Not statistically different";
+          };
+
+
          inputData.referenceCategories
             .filter(refName => groupNames.includes(refName)) // Ensure ref exists
             .sort()
@@ -164,12 +197,9 @@ export function exportToCSV(
                     .sort()
                     .forEach(compName => {
                         const pValue = reportData.pairwiseResultsMatrix?.[refName]?.[compName];
-                        let interpretation = "N/A";
-                        if (pValue !== null && !isNaN(pValue as number)) {
-                             interpretation = pValue < correctedAlpha ? "Statistically different" : "Not statistically different";
-                        }
+                        const interpretation = getPairwiseInterpretation(pValue, correctedAlpha);
                         csvRows.push(
-                           `${escapeCSV(refName)},${escapeCSV(compName)},${escapeCSV(formatScientific(pValue))},${escapeCSV(interpretation)}`
+                           `${escapeCSV(refName)},${escapeCSV(compName)},${escapeCSV(formatScientific(pValue, 3))},"${escapeCSV(interpretation)}"`
                         );
                     });
          });
@@ -182,7 +212,7 @@ export function exportToCSV(
    // --- Errors Section ---
     if (reportData.errors && reportData.errors.length > 0) {
         csvRows.push("Calculation Errors/Warnings");
-        reportData.errors.forEach(err => csvRows.push(escapeCSV(err)));
+        reportData.errors.forEach(err => csvRows.push(`"${escapeCSV(err)}"`)); // Wrap errors in quotes
         csvRows.push("");
     }
 
@@ -206,21 +236,3 @@ export function exportToCSV(
     throw new Error("CSV download not supported.");
   }
 }
-
-// Commenting out re-declarations as they should be handled by imports now
-// interface GroupInput {
-//   name: string;
-//   experienced: number;
-//   notExperienced: number;
-// }
-
-// interface FormValues {
-//   alpha: number;
-//   groups: GroupInput[];
-//   referenceCategories: string[]; // Ensure this is defined
-// }
-
-// Assuming formatters are imported or defined in calculations.ts and exported
-// declare function formatScientific(value: number | null | undefined, significantDigits?: number): string;
-// declare function formatDecimal(value: number | null | undefined, decimalPlaces?: number): string;
-// declare function formatPercent(value: number | null | undefined, decimalPlaces?: number): string;
