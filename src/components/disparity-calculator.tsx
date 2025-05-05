@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { FormEvent } from 'react';
@@ -117,8 +116,8 @@ export default function DisparityCalculator() {
 
        // Enforce range limits directly for better UX than just validation message
         if (!isNaN(numValue)) {
-            if (numValue <= 0) numValue = 0.00000001; // Set to a very small positive number if <= 0
-            if (numValue > 1) numValue = 1; // Cap at 1
+             // Clamp the value between a very small positive number and 1
+             numValue = Math.max(0.00000001, Math.min(numValue, 1));
             form.setValue('alpha', numValue, { shouldValidate: true });
         } else if (value === '') {
             // Allow temporary empty state, validation will catch it if submitted
@@ -805,14 +804,14 @@ export default function DisparityCalculator() {
                                                   <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
                                                   <TableHead rowSpan={2} className="text-center border-r align-bottom pb-2">% Experienced</TableHead>
                                                   <TableHead colSpan={2} className="text-center border-r">Expected</TableHead>
-                                                  <TableHead rowSpan={2} className="text-center align-bottom pb-2">Chi-Sq Contribution</TableHead>{/* Added Contribution Header */}
+                                                  <TableHead rowSpan={2} className="text-center align-bottom pb-2">Chi-Sq Contribution</TableHead>
                                              </TableRow>
                                               <TableRow className="hover:bg-table-header-bg/90">
                                                    <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                                    <TableHead className="text-right border-r">Row Subtotal</TableHead>
-                                                   <TableHead className="text-right border-r"># Did NOT Experience</TableHead> {/* Added Expected Not Exp Header */}
-                                                   <TableHead className="text-right"># Experienced</TableHead> {/* Added Expected Exp Header */}
+                                                   <TableHead className="text-right border-r"># Did NOT Experience</TableHead>
+                                                   <TableHead className="text-right"># Experienced</TableHead>
                                               </TableRow>
                                          </TableHeader>
                                          <TableBody>
@@ -823,9 +822,9 @@ export default function DisparityCalculator() {
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{row.rowTotal.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{formatPercent(row.percentExperienced)}</TableCell>
-                                                      <TableCell className="text-right py-2 px-4 border-r">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell> {/* Display Expected Not Exp */}
-                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell> {/* Display Expected Exp */}
-                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.chiSquareContribution, 3)}</TableCell>{/* Display Contribution */}
+                                                      <TableCell className="text-right py-2 px-4 border-r">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell>
+                                                      <TableCell className="text-right py-2 px-4">{formatDecimal(row.chiSquareContribution, 3)}</TableCell>
                                                  </TableRow>
                                              ))}
                                          </TableBody>
@@ -840,7 +839,7 @@ export default function DisparityCalculator() {
                                                      </TableCell>
                                                     <TableCell className="text-right py-2 px-4 border-r">{formatDecimal(reportResults.totals.totalExpectedNotExperienced, 1)}</TableCell>
                                                     <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedExperienced, 1)}</TableCell>
-                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalChiSquareContributions, 3)}</TableCell> {/* Display Total Contribution */}
+                                                    <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalChiSquareContributions, 3)}</TableCell>
                                                </TableRow>
                                           </TableFooter>
                                      </Table>
@@ -1060,5 +1059,3 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
-
-    
