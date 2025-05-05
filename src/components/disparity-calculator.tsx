@@ -31,10 +31,10 @@ import {
     formatDecimal,
     formatPercent
 } from "@/lib/calculations";
-import { exportToCSV, type FormValues as ExportFormValues } from '@/lib/utils'; // Corrected import type name
+import { exportToCSV, type ExportFormValues } from '@/lib/utils'; // Corrected import type name
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Toaster } from "@/components/ui/toaster";
+
 
 // --- Zod Schema Definition ---
 const groupSchema = z.object({
@@ -767,20 +767,15 @@ export default function DisparityCalculator() {
                                      <Table>
                                          <TableHeader className="table-header-dark">
                                              <TableRow className="hover:bg-table-header-bg/90">
-                                                  {/* Row Header */}
                                                   <TableHead rowSpan={2} className="align-bottom pb-2">Category (Race)</TableHead>
-                                                  {/* Observed Columns */}
                                                   <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
-                                                  {/* Expected Columns */}
                                                   <TableHead rowSpan={2} className="text-center border-r align-bottom pb-2">% Experienced</TableHead>
                                                   <TableHead colSpan={2} className="text-center">Expected</TableHead>
                                              </TableRow>
                                               <TableRow className="hover:bg-table-header-bg/90">
-                                                   {/* Observed Sub-headers */}
                                                    <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                                    <TableHead className="text-right border-r">Row Subtotal</TableHead>
-                                                   {/* Expected Sub-headers */}
                                                    <TableHead className="text-right"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                               </TableRow>
@@ -788,15 +783,11 @@ export default function DisparityCalculator() {
                                          <TableBody>
                                              {reportResults.contingencySummary.map((row, index) => (
                                                  <TableRow key={row.name} className={cn("table-row-alt", "hover:bg-muted/50")}>
-                                                      {/* Category Name */}
                                                       <TableCell className="font-medium py-2 px-4">{row.name}</TableCell>
-                                                      {/* Observed */}
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-l">{row.notExperienced.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint">{row.experienced.toLocaleString()}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{row.rowTotal.toLocaleString()}</TableCell>
-                                                      {/* Percent */}
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-r">{formatPercent(row.percentExperienced)}</TableCell>
-                                                      {/* Expected */}
                                                       <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedNotExperienced, 1)}</TableCell>
                                                       <TableCell className="text-right py-2 px-4">{formatDecimal(row.expectedExperienced, 1)}</TableCell>
                                                  </TableRow>
@@ -805,15 +796,12 @@ export default function DisparityCalculator() {
                                          <TableFooter>
                                                <TableRow className="bg-muted/80 font-semibold hover:bg-muted">
                                                     <TableCell className="py-2 px-4">Column Subtotal</TableCell>
-                                                    {/* Observed Totals */}
                                                     <TableCell className="text-right py-2 px-4 border-l">{reportResults.totals.totalNotExperienced.toLocaleString()}</TableCell>
                                                     <TableCell className="text-right py-2 px-4">{reportResults.totals.totalExperienced.toLocaleString()}</TableCell>
                                                     <TableCell className="text-right py-2 px-4 border-r">{reportResults.totals.grandTotal.toLocaleString()}</TableCell>
-                                                    {/* % Total - Blank or Overall % */}
                                                      <TableCell className="text-right py-2 px-4 border-r">
                                                         {reportResults.totals.grandTotal > 0 ? formatPercent((reportResults.totals.totalExperienced / reportResults.totals.grandTotal) * 100) : 'N/A'}
                                                      </TableCell>
-                                                    {/* Expected Totals */}
                                                     <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedNotExperienced, 1)}</TableCell>
                                                     <TableCell className="text-right py-2 px-4">{formatDecimal(reportResults.totals.totalExpectedExperienced, 1)}</TableCell>
                                                </TableRow>
@@ -843,7 +831,6 @@ export default function DisparityCalculator() {
                                                <span className="font-medium"># of Pairwise Comparisons:</span>
                                                <span>{reportResults.overallStats.numComparisons}</span>
                                            </div>
-                                           {/* Display Bonferroni Alpha */}
                                            {reportResults.overallStats.numComparisons > 0 && (
                                                 <div className="flex justify-between">
                                                     <span className="font-medium">Bonferroni Corrected α:</span>
@@ -859,10 +846,9 @@ export default function DisparityCalculator() {
                                       </div>
 
                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2">
-                                           {/* Use a simplified table for better alignment */}
                                           <Table>
-                                              <TableHeader className="border-b-0"> {/* Remove border from header */}
-                                                  <TableRow className="border-b-0 hover:bg-transparent"> {/* Remove border and hover effect */}
+                                              <TableHeader className="border-b-0">
+                                                  <TableRow className="border-b-0 hover:bg-transparent">
                                                       <TableHead className="font-medium pl-0 h-auto py-1">Test</TableHead>
                                                       <TableHead className="font-medium text-right h-auto py-1">Statistic</TableHead>
                                                       <TableHead className="font-medium text-right h-auto py-1">P-Value</TableHead>
@@ -870,7 +856,6 @@ export default function DisparityCalculator() {
                                                   </TableRow>
                                               </TableHeader>
                                               <TableBody>
-                                                   {/* Chi-square */}
                                                    <TableRow className="border-b-0 hover:bg-transparent">
                                                        <TableCell className="font-medium pl-0 py-1">Chi-square</TableCell>
                                                        <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</TableCell>
@@ -881,8 +866,6 @@ export default function DisparityCalculator() {
                                                             {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
                                                         </TableCell>
                                                    </TableRow>
-
-                                                   {/* Chi-square (Yates) */}
                                                     <TableRow className="border-b-0 hover:bg-transparent">
                                                         <TableCell className="font-medium pl-0 py-1">Chi-square (Yates)</TableCell>
                                                         <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</TableCell>
@@ -893,8 +876,6 @@ export default function DisparityCalculator() {
                                                               {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
                                                           </TableCell>
                                                     </TableRow>
-
-                                                   {/* G-Test */}
                                                     <TableRow className="border-b-0 hover:bg-transparent">
                                                         <TableCell className="font-medium pl-0 py-1">G-Test</TableCell>
                                                         <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.gTest.statistic)}</TableCell>
