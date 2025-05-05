@@ -40,8 +40,12 @@ export default {
   				DEFAULT: 'hsl(var(--destructive))',
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
+            'significant-blue': 'hsl(var(--significant-blue))', // Add this line
   			border: 'hsl(var(--border))',
-  			input: 'hsl(var(--input))',
+  			input: { // Make input an object to allow defining border separately if needed
+                 DEFAULT: 'hsl(var(--input))',
+                 border: 'hsl(var(--input-border))' // Define input-border here
+             },
   			ring: 'hsl(var(--ring))',
   			chart: {
   				'1': 'hsl(var(--chart-1))',

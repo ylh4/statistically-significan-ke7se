@@ -24,15 +24,18 @@ export interface CalculationResult {
 }
 
 // Approximation for the inverse standard normal CDF (Percent Point Function)
+// Gives the Z-score for a given cumulative probability p.
+// For a two-tailed test with significance alpha, we need the Z-score corresponding to 1 - alpha/2.
 // Based on Abramowitz and Stegun formula 26.2.23
 // Reasonably accurate for p between 0.001 and 0.999
-function invNormCDF(p: number): number {
+export function invNormCDF(p: number): number {
   if (p <= 0 || p >= 1) return NaN;
   if (p === 0.5) return 0;
 
-  // Adjust p for two-tailed test (we want the upper critical value)
-  const targetP = 1 - p; // e.g., for alpha=0.05, p=0.025, targetP=0.975
-  const q = targetP < 0.5 ? targetP : 1 - targetP; // Use the smaller tail area for calculation
+  // We want the Z-score such that P(Z <= z) = p
+  const q = p < 0.5 ? p : 1 - p; // Use the smaller tail area for calculation accuracy
+
+  if (q === 0) return p < 0.5 ? -Infinity : Infinity; // Handle edge case if p is very close to 0 or 1
 
   const t = Math.sqrt(-2 * Math.log(q));
   const c0 = 2.515517;
@@ -44,8 +47,8 @@ function invNormCDF(p: number): number {
 
   let x = t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t);
 
-  // If we used the lower tail (targetP < 0.5), negate the result
-  if (targetP < 0.5) {
+  // If we used the lower tail (p < 0.5), negate the result to get the correct Z-score
+  if (p < 0.5) {
     x = -x;
   }
 
@@ -57,29 +60,29 @@ export function calculateDisparity(inputs: CalculationInputs): CalculationResult
   const { N, alpha, categories, referenceCategoryName } = inputs;
   const results: CalculationResult[] = [];
 
-  // Basic Validations
-  if (N < 30) {
-    throw new Error("Total Sample Size (N) must be at least 30.");
-  }
-  if (alpha <= 0 || alpha >= 1) {
-    throw new Error("Significance Level (α) must be between 0 and 1.");
-  }
-  const totalCount = categories.reduce((sum, cat) => sum + cat.count, 0);
-  if (totalCount !== N) {
-    throw new Error(`Sum of category counts (${totalCount}) must equal Total Sample Size (N = ${N}).`);
-  }
+  // Basic Validations moved to Zod schema where possible
+
   const referenceCategory = categories.find(cat => cat.name === referenceCategoryName);
-  if (!referenceCategory) {
-    throw new Error(`Reference category "${referenceCategoryName}" not found in the category list.`);
-  }
-  if (categories.some(cat => cat.count < 0)) {
-      throw new Error("Category counts cannot be negative.");
-  }
+  // Zod ensures N >= 30, alpha in range, counts >= 0, sum matches N, ref category exists
+
+   if (!referenceCategory) {
+     // This case should theoretically not happen if Zod validation passes, but added as a safeguard.
+     throw new Error(`Reference category "${referenceCategoryName}" logic error.`);
+   }
+   if (referenceCategory.count === 0) {
+      throw new Error(`Reference category "${referenceCategoryName}" has a count of 0, which is not suitable for comparison.`);
+   }
+   if (referenceCategory.count === N) {
+       throw new Error(`Reference category "${referenceCategoryName}" has a count equal to N, leaving no variance for comparison.`);
+   }
+
 
   const pRef = referenceCategory.count / N;
-  const zCrit = invNormCDF(alpha / 2); // Critical Z for two-tailed test
+  // Calculate the critical Z-value for the upper tail of the two-tailed test
+  const zCrit = invNormCDF(1 - alpha / 2);
 
   if (isNaN(zCrit)) {
+    // This should also be less likely given alpha validation, but good to keep
     throw new Error("Could not calculate critical Z-value. Check significance level.")
   }
 
@@ -89,50 +92,93 @@ export function calculateDisparity(inputs: CalculationInputs): CalculationResult
       return;
     }
 
+    let pi: number | undefined = undefined;
+    let delta: number | undefined = undefined;
+    let SE: number | undefined = undefined;
+    let zStat: number | undefined = undefined;
+    let ciLow: number | undefined = undefined;
+    let ciHigh: number | undefined = undefined;
+    let isSignificant = false;
+    let error: string | undefined = undefined;
+
+
     try {
-        const pi = category.count / N;
-        const delta = pi - pRef;
+        // Validations for count < 0 and count > N are technically handled by Zod and refine,
+        // but keeping a check here might catch edge cases if form state somehow bypasses Zod momentarily.
+        if (category.count < 0) {
+             throw new Error("Count cannot be negative."); // Redundant with Zod, but safe
+        }
+         if (category.count > N) {
+             throw new Error(`Count (${category.count}) cannot exceed Total Sample Size (N = ${N}).`); // Redundant with Zod refine, but safe
+         }
+
+        pi = category.count / N;
+        delta = pi - pRef;
 
         // Check for edge cases where proportions are 0 or 1
-        const varPi = pi * (1 - pi) / N;
-        const varPRef = pRef * (1 - pRef) / N;
+        // Calculate variance, ensuring non-negativity
+        const varPi = Math.max(0, pi * (1 - pi) / N);
+        const varPRef = Math.max(0, pRef * (1 - pRef) / N);
 
-        // Handle cases where variance might be zero or negative (due to floating point issues or p=0/1)
-        const safeVarPi = Math.max(0, varPi);
-        const safeVarPRef = Math.max(0, varPRef);
+        SE = Math.sqrt(varPi + varPRef);
 
-        const SE = Math.sqrt(safeVarPi + safeVarPRef);
+        // Handle SE === 0 case
+        if (SE === 0) {
+            // If delta is also 0, it's not significant.
+            if (delta === 0) {
+                zStat = 0;
+                ciLow = 0;
+                ciHigh = 0;
+                isSignificant = false;
+            } else {
+                // If delta is non-zero and SE is 0, it implies perfect separation (e.g., 0% vs 100%).
+                // This is statistically significant. Assign Infinity Z-stat and CI collapses.
+                zStat = delta > 0 ? Infinity : -Infinity;
+                ciLow = delta;
+                ciHigh = delta;
+                isSignificant = true;
+            }
+        } else {
+            // Standard calculation
+            zStat = delta / SE;
+            const ciMargin = zCrit * SE;
+            ciLow = delta - ciMargin;
+            ciHigh = delta + ciMargin;
+             // Significance check: Compare absolute zStat to the positive critical value
+            isSignificant = Math.abs(zStat) > zCrit;
+        }
 
-        // Avoid division by zero if SE is zero (occurs if both pi and pRef are 0 or 1)
-        const zStat = SE === 0 ? 0 : delta / SE;
 
-        const ciMargin = zCrit * SE;
-        const ciLow = delta - ciMargin;
-        const ciHigh = delta + ciMargin;
-
-        const isSignificant = Math.abs(zStat) > zCrit;
+        // Final check for NaN on key results before pushing
+        if ([pi, delta, SE, zStat, ciLow, ciHigh].some(isNaN)) {
+             // Avoid pushing NaN if SE was 0 and handled correctly
+             if (!((SE === 0) && [zStat, ciLow, ciHigh].every(val => val === 0 || val === delta || val === Infinity || val === -Infinity))) {
+                throw new Error("Calculation resulted in unexpected NaN values.");
+             }
+        }
 
         results.push({
-        categoryName: category.name,
-        pi,
-        pRef,
-        delta,
-        SE,
-        zStat,
-        ciLow,
-        ciHigh,
-        isSignificant,
+            categoryName: category.name,
+            pi: pi!,
+            pRef: pRef,
+            delta: delta!,
+            SE: SE!,
+            zStat: zStat!,
+            ciLow: ciLow!,
+            ciHigh: ciHigh!,
+            isSignificant,
         });
+
     } catch (e: any) {
          results.push({
             categoryName: category.name,
-            pi: NaN,
+            pi: pi ?? NaN, // Use calculated value if available, else NaN
             pRef: pRef,
-            delta: NaN,
-            SE: NaN,
-            zStat: NaN,
-            ciLow: NaN,
-            ciHigh: NaN,
+            delta: delta ?? NaN,
+            SE: SE ?? NaN,
+            zStat: zStat ?? NaN,
+            ciLow: ciLow ?? NaN,
+            ciHigh: ciHigh ?? NaN,
             isSignificant: false,
             error: `Error calculating for ${category.name}: ${e.message || 'Unknown error'}`
         });

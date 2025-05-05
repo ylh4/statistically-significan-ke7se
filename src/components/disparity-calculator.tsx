@@ -12,8 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle } from 'lucide-react';
-import { calculateDisparity, type CalculationResult, type Category } from "@/lib/calculations";
+import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, CheckCircle, XCircle, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { calculateDisparity, type CalculationResult, type Category, invNormCDF } from "@/lib/calculations"; // Import invNormCDF
 import { exportToCSV } from '@/lib/utils';
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -37,8 +37,10 @@ const formSchema = z.object({
     .min(30, "Total Sample Size (N) must be at least 30"),
   alpha: z.coerce
     .number({ invalid_type_error: "Significance Level must be a number" })
-    .positive("Significance Level must be positive") // Ensures > 0
-    .lt(1, "Significance Level must be less than 1"), // Ensures < 1
+    .positive("Significance Level must be positive") // Must be > 0
+    .lt(1, "Significance Level must be less than 1") // Must be < 1
+    .refine(val => val >= 0.0001, { message: "Significance Level must be at least 0.0001" }) // Practical lower bound
+    .refine(val => val <= 0.9999, { message: "Significance Level must be at most 0.9999" }), // Practical upper bound - Added 'val' argument
   categories: z.array(categorySchema).min(2, "At least two categories are required"),
   referenceCategoryName: z.string().min(1, "Please select a reference category"),
 }).refine(data => {
@@ -59,6 +61,8 @@ export default function DisparityCalculator() {
   const { toast } = useToast();
   const [results, setResults] = useState<CalculationResult[]>([]);
   const [calculationError, setCalculationError] = useState<string | null>(null);
+  const [referenceProportion, setReferenceProportion] = useState<number | null>(null);
+
 
    const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -82,6 +86,7 @@ export default function DisparityCalculator() {
   const watchCategories = form.watch("categories");
   const watchN = form.watch("N");
   const watchReference = form.watch("referenceCategoryName");
+  const watchAlpha = form.watch("alpha"); // Watch alpha
 
    // Update reference category options when categories change
   const categoryOptions = useMemo(() => {
@@ -93,7 +98,23 @@ export default function DisparityCalculator() {
     if (watchReference && !categoryOptions.includes(watchReference)) {
       form.setValue("referenceCategoryName", "");
     }
-  }, [categoryOptions, watchReference, form]);
+     // Auto-select first category as reference if only two exist and none selected
+    if (fields.length === 2 && !watchReference && categoryOptions.length === 2) {
+         form.setValue("referenceCategoryName", categoryOptions[0]);
+    }
+  }, [categoryOptions, watchReference, form, fields.length]);
+
+   // Update reference proportion when N, reference category, or counts change
+  useEffect(() => {
+    const nValue = typeof watchN === 'number' && !isNaN(watchN) ? watchN : 0;
+    const refCat = watchCategories.find(cat => cat.name === watchReference);
+    if (refCat && nValue > 0 && !isNaN(refCat.count)) {
+      setReferenceProportion(refCat.count / nValue);
+    } else {
+      setReferenceProportion(null);
+    }
+  }, [watchN, watchReference, watchCategories]);
+
 
   // Recalculate total count for validation feedback
    const currentTotalCount = useMemo(() => {
@@ -105,13 +126,21 @@ export default function DisparityCalculator() {
    const nValue = typeof watchN === 'number' && !isNaN(watchN) ? watchN : 0;
    const countMatchesN = nValue > 0 && currentTotalCount === nValue;
 
+  // Calculate critical Z value based on alpha for display
+  const criticalZ = useMemo(() => {
+    if (typeof watchAlpha === 'number' && !isNaN(watchAlpha) && watchAlpha > 0 && watchAlpha < 1) {
+      const z = invNormCDF(1 - watchAlpha / 2);
+      return isNaN(z) ? 'N/A' : z.toFixed(4);
+    }
+    return 'N/A';
+  }, [watchAlpha]);
+
+
   const onSubmit = (data: FormValues) => {
     setCalculationError(null);
     setResults([]); // Clear previous results
+    setReferenceProportion(null); // Clear old reference proportion
     try {
-      // **Phase C Integration Point:**
-      // Replace this direct call with an API fetch in the future
-      // For now, we call the calculation function directly
       const calculatedResults = calculateDisparity({
         N: data.N,
         alpha: data.alpha,
@@ -119,6 +148,14 @@ export default function DisparityCalculator() {
         referenceCategoryName: data.referenceCategoryName,
       });
       setResults(calculatedResults);
+
+      // Update reference proportion based on final submitted data
+      const refCatData = data.categories.find(c => c.name === data.referenceCategoryName);
+      if (refCatData && data.N > 0) {
+        setReferenceProportion(refCatData.count / data.N);
+      }
+
+
        toast({
             title: "Calculation Successful",
             description: "Disparity results have been generated.",
@@ -148,9 +185,19 @@ export default function DisparityCalculator() {
   };
 
   const handleReset = () => {
-    form.reset();
+    // Reset form to default values, not just empty
+    form.reset({
+       N: 100,
+       alpha: 0.05,
+       categories: [
+         { name: "Group A", count: 50 },
+         { name: "Group B", count: 50 },
+       ],
+       referenceCategoryName: "",
+    });
     setResults([]);
     setCalculationError(null);
+    setReferenceProportion(null);
      toast({
         title: "Form Reset",
         description: "All inputs and results have been cleared.",
@@ -167,7 +214,8 @@ export default function DisparityCalculator() {
           return;
       }
     try {
-        exportToCSV(results);
+        // Pass the reference category name for inclusion in the CSV
+        exportToCSV(results, `disparity-results_${form.getValues('referenceCategoryName')}.csv`, form.getValues('referenceCategoryName'));
          toast({
             title: "Export Successful",
             description: "Results exported to CSV.",
@@ -182,8 +230,20 @@ export default function DisparityCalculator() {
     }
   };
 
+  // Format numbers, handling NaN and Infinity
+  const formatNumber = (num: number | undefined | null, decimals: number = 4): string => {
+      if (num === undefined || num === null || isNaN(num)) {
+          return 'N/A';
+      }
+       if (num === Infinity) return 'Infinity';
+       if (num === -Infinity) return '-Infinity';
+      return num.toFixed(decimals);
+  };
+
+
+
   return (
-    <Card className="w-full max-w-4xl mx-auto shadow-lg">
+    <Card className="w-full max-w-5xl mx-auto shadow-lg"> {/* Increased max-width */}
        <Toaster />
       <CardHeader>
         <CardTitle className="text-2xl text-secondary-foreground">Input Parameters</CardTitle>
@@ -206,14 +266,27 @@ export default function DisparityCalculator() {
             </div>
              <div className="space-y-2">
               <Label htmlFor="alpha">Significance Level (α)</Label>
-              <Input
-                id="alpha"
-                type="number"
-                // Remove min/max/step to rely primarily on Zod and allow easier typing
-                // placeholder="e.g., 0.05" // Optional placeholder
-                {...form.register("alpha")}
-                 className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
-              />
+               <Controller
+                  control={form.control}
+                  name="alpha"
+                  render={({ field: { onChange, onBlur, value, ref } }) => (
+                     <Input
+                       id="alpha"
+                       type="number"
+                       step="0.001"
+                       min="0.0001"
+                       max="0.9999"
+                       value={value ?? ''} // Ensure value is not undefined/null for input
+                       onChange={(e) => {
+                          const numVal = e.target.value === '' ? null : parseFloat(e.target.value);
+                          onChange(numVal); // Pass null or number to react-hook-form
+                       }}
+                       onBlur={onBlur}
+                       ref={ref}
+                       className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
+                     />
+                  )}
+               />
                {form.formState.errors.alpha && <p className="text-sm text-destructive">{form.formState.errors.alpha.message}</p>}
             </div>
           </div>
@@ -252,7 +325,7 @@ export default function DisparityCalculator() {
                   size="icon"
                   onClick={() => remove(index)}
                   disabled={fields.length <= 2}
-                  className="mt-6 text-destructive hover:bg-destructive/10"
+                  className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
                   aria-label="Remove category"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -295,8 +368,8 @@ export default function DisparityCalculator() {
                             </SelectTrigger>
                             <SelectContent>
                                 {categoryOptions.map(name => (
-                                <SelectItem key={name} value={name}>
-                                    {name}
+                                <SelectItem key={name} value={name} disabled={name.trim() === ''}>
+                                    {name || '(Empty Name)'}
                                 </SelectItem>
                                 ))}
                             </SelectContent>
@@ -322,8 +395,13 @@ export default function DisparityCalculator() {
       {/* Results Section */}
       {(results.length > 0 || calculationError) && (
         <CardFooter className="flex-col items-start gap-4 pt-6 border-t">
-           <div className="flex justify-between w-full items-center">
-             <h2 className="text-xl font-semibold text-secondary-foreground">Results</h2>
+           <div className="flex justify-between w-full items-center mb-4">
+             <div className='flex flex-col sm:flex-row sm:items-center gap-x-4'>
+                 <h2 className="text-xl font-semibold text-secondary-foreground">Results</h2>
+                 <span className="text-sm text-muted-foreground">
+                    (Reference: {watchReference || 'N/A'} {referenceProportion !== null ? `[p = ${formatNumber(referenceProportion)}]` : ''}, α = {formatNumber(watchAlpha)}, Critical Z = ±{criticalZ})
+                 </span>
+             </div>
               <Button
                     type="button"
                     variant="outline"
@@ -336,7 +414,7 @@ export default function DisparityCalculator() {
            </div>
 
           {calculationError && (
-            <Alert variant="destructive" className="w-full">
+            <Alert variant="destructive" className="w-full mb-4">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Calculation Error</AlertTitle>
               <AlertDescription>{calculationError}</AlertDescription>
@@ -348,41 +426,70 @@ export default function DisparityCalculator() {
               <Table>
                 <TableHeader className="bg-secondary">
                   <TableRow>
-                    <TableHead>Category</TableHead>
-                    <TableHead>pᵢ</TableHead>
-                    <TableHead>p<sub className="text-xs">ref</sub></TableHead>
-                    <TableHead>δ (Difference)</TableHead>
-                    <TableHead>SE</TableHead>
-                    <TableHead>z-statistic</TableHead>
-                    <TableHead>CI Low</TableHead>
-                    <TableHead>CI High</TableHead>
-                    <TableHead>Significant?</TableHead>
+                    <TableHead>Comparison Group</TableHead> {/* Changed Header */}
+                    <TableHead className="text-right">Proportion (p)</TableHead> {/* Simplified Header */}
+                    <TableHead className="text-right">Difference (δ)</TableHead>
+                    <TableHead className="text-right">Std. Error (SE)</TableHead>
+                    <TableHead className="text-right">Z-Statistic</TableHead>
+                    <TableHead className="text-right">Confidence Interval (CI)</TableHead> {/* Combined CI */}
+                    <TableHead className="text-center">Statistically Significant?</TableHead>
                     <TableHead>Notes</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                   {/* Reference Category Row - REMOVED */}
+
+                  {/* Display Comparison Category Rows */}
                   {results.map((result) => (
                     <TableRow
                       key={result.categoryName}
-                      className={cn(
-                        result.isSignificant && result.delta > 0 && "significant-red", // Red for positive significant diff
-                        result.isSignificant && result.delta < 0 && "significant-blue", // Blue for negative significant diff
-                        !result.isSignificant && !result.error && "bg-muted/50", // Gray for non-significant
-                        result.error && "bg-destructive/20" // Light red for rows with errors
-                      )}
+                       className={cn(
+                          result.error && "bg-destructive/10", // Light red background ONLY for error rows
+                           !result.error && result.isSignificant && "bg-muted/40", // Neutral muted background for significant rows
+                           !result.error && !result.isSignificant && "hover:bg-muted/50" // Standard hover for non-significant non-error rows
+                       )}
                     >
                       <TableCell className="font-medium">{result.categoryName}</TableCell>
-                      <TableCell>{isNaN(result.pi) ? 'N/A' : result.pi.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.pRef) ? 'N/A' : result.pRef.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.delta) ? 'N/A' : result.delta.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.SE) ? 'N/A' : result.SE.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.zStat) ? 'N/A' : result.zStat.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.ciLow) ? 'N/A' : result.ciLow.toFixed(4)}</TableCell>
-                      <TableCell>{isNaN(result.ciHigh) ? 'N/A' : result.ciHigh.toFixed(4)}</TableCell>
-                       <TableCell>
-                         {result.error ? 'Error' : (result.isSignificant ? 'Yes' : 'No')}
+                      <TableCell className="text-right">{formatNumber(result.pi)}</TableCell>
+                      <TableCell className={cn("text-right",
+                         result.isSignificant && "font-semibold", // Bold significant differences
+                         result.isSignificant && result.delta > 0 && "text-destructive", // Red for positive significant diff
+                         result.isSignificant && result.delta < 0 && "text-significant-blue" // Blue for negative significant diff
+                       )}>
+                         {formatNumber(result.delta)}
+                      </TableCell>
+                      <TableCell className="text-right">{formatNumber(result.SE)}</TableCell>
+                      <TableCell className={cn("text-right",
+                         result.isSignificant && "font-semibold" // Bold significant Z-stats
+                       )}>
+                        {formatNumber(result.zStat)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                           {/* Combined CI */}
+                            {result.error ? 'N/A' : `[${formatNumber(result.ciLow)}, ${formatNumber(result.ciHigh)}]`}
+                      </TableCell>
+                       <TableCell className="text-center">
+                          {result.error ? (
+                              <span className="text-destructive font-medium flex items-center justify-center">
+                                 <XCircle className="mr-1 h-4 w-4" /> Error
+                              </span>
+                          ) : result.isSignificant ? (
+                               <span className={cn("font-medium flex items-center justify-center",
+                                  result.delta > 0 ? "text-destructive" : "text-significant-blue"
+                               )}>
+                                  {result.delta > 0
+                                     ? <ArrowUpCircle className="mr-1 h-4 w-4" />
+                                     : <ArrowDownCircle className="mr-1 h-4 w-4" />
+                                  }
+                                  Yes
+                               </span>
+                          ) : (
+                             <span className="text-muted-foreground flex items-center justify-center">
+                               <CheckCircle className="mr-1 h-4 w-4 text-green-600" /> No
+                             </span>
+                          )}
                        </TableCell>
-                      <TableCell className="text-xs text-destructive-foreground/80">
+                      <TableCell className="text-xs text-destructive"> {/* Ensure error text is visible */}
                         {result.error ? result.error : ''}
                       </TableCell>
                     </TableRow>

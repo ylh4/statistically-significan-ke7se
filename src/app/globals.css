@@ -24,7 +24,7 @@ body {
     --accent-foreground: 0 0% 98%;
     --destructive: 0 84.2% 60.2%; /* Default Red */
     --destructive-foreground: 0 0% 98%;
-    --significant-blue: 217.2 91.2% 59.8%; /* Blue for significance */
+    --significant-blue: 217.2 91.2% 59.8%; /* Blue for significance - KEEP FOR TEXT COLOR */
     --significant-blue-foreground: 0 0% 98%;
     --border: 0 0% 89.8%;
     --input: 0 0% 100%; /* White inputs on gray bg */
@@ -55,7 +55,7 @@ body {
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --significant-blue: 217.2 91.2% 40%; /* Darker Blue */
+    --significant-blue: 217.2 91.2% 40%; /* Darker Blue - KEEP FOR TEXT COLOR */
     --significant-blue-foreground: 0 0% 98%;
     --border: 0 0% 14.9%;
     --input: 0 0% 14.9%;
@@ -80,22 +80,38 @@ body {
   input, select, textarea {
      @apply border; /* Apply default border width/style */
      border-color: hsl(var(--input-border)); /* Apply the specific border color */
+     /* Apply input background and text color */
+     @apply bg-input text-foreground;
   }
 
-  /* Custom class for significant blue rows */
-  .significant-blue {
-    background-color: hsl(var(--significant-blue));
-    color: hsl(var(--significant-blue-foreground));
-  }
-  .significant-blue:hover {
-     background-color: hsl(var(--significant-blue) / 0.9); /* Slightly lighter/transparent on hover */
-  }
-
-   /* Custom class for significant red rows */
-  .significant-red {
-    @apply bg-destructive text-destructive-foreground;
-  }
-   .significant-red:hover {
-     @apply bg-destructive/90;
+   /* Apply Select dropdown trigger background */
+  [data-radix-select-trigger] {
+      @apply bg-input text-foreground border-input-border;
    }
+   /* Apply Select dropdown content background */
+   [data-radix-select-content] {
+       @apply bg-popover text-popover-foreground border-border;
+   }
+   /* Apply Select dropdown item background */
+   [data-radix-select-item] {
+        @apply focus:bg-accent focus:text-accent-foreground;
+   }
+
+   /* Explicitly style Table Header */
+   thead {
+        @apply bg-secondary text-secondary-foreground;
+   }
+   /* Explicitly style Table Header Cells */
+    th {
+        @apply text-secondary-foreground; /* Ensure header text uses secondary foreground */
+    }
+     /* Define text color utility using the CSS variable */
+     .text-significant-blue {
+       color: hsl(var(--significant-blue));
+     }
+     .dark .text-significant-blue {
+         color: hsl(var(--significant-blue)); /* Ensure dark mode uses the same var */
+     }
+
+
 }

@@ -8,25 +8,37 @@ export function cn(...inputs: ClassValue[]) {
 
 
 // Function to convert array of objects to CSV string and trigger download
-export function exportToCSV(data: CalculationResult[], filename: string = 'disparity-results.csv') {
+export function exportToCSV(data: CalculationResult[], filename: string = 'disparity-results.csv', referenceCategoryName?: string) {
   if (!data || data.length === 0) {
     console.error("No data provided for CSV export.");
     return;
   }
 
-  // Define CSV headers based on the CalculationResult interface keys
+  // Define CSV headers based on the updated table display
   const headers = [
-    "Category",
-    "p_i",
-    "p_ref",
-    "δ",
-    "SE",
-    "z",
-    "CI_low",
-    "CI_high",
+    "Comparison Group", // Changed Header
+    "Proportion (p)", // Simplified Header
+    "Difference (δ)",
+    "Std. Error (SE)",
+    "Z-Statistic",
+    "Lower CI", // Keep separate for CSV clarity
+    "Upper CI", // Keep separate for CSV clarity
     "Significant?",
     "Error" // Include error column
   ];
+
+  // Helper to format numbers, handling NaN and potential undefined
+   const formatNumberForCSV = (num: number | undefined | null): string => {
+       if (num === undefined || num === null || isNaN(num)) {
+           return 'N/A';
+       }
+        // Handle Infinity cases for zStat
+       if (num === Infinity) return 'Infinity';
+       if (num === -Infinity) return '-Infinity';
+       // Use enough precision for CSV
+       return num.toFixed(6); // Increased precision for CSV export
+   };
+
 
   const csvRows = [
     headers.join(',') // Header row
@@ -37,14 +49,13 @@ export function exportToCSV(data: CalculationResult[], filename: string = 'dispa
     // Order matters, ensure it matches headers
     const values = [
       `"${row.categoryName.replace(/"/g, '""')}"`, // Escape quotes in names
-      row.pi.toFixed(4),
-      row.pRef.toFixed(4),
-      row.delta.toFixed(4),
-      row.SE.toFixed(4),
-      row.zStat.toFixed(4),
-      row.ciLow.toFixed(4),
-      row.ciHigh.toFixed(4),
-      row.isSignificant ? 'Yes' : 'No',
+      formatNumberForCSV(row.pi),
+      formatNumberForCSV(row.delta),
+      formatNumberForCSV(row.SE),
+      formatNumberForCSV(row.zStat),
+      formatNumberForCSV(row.ciLow), // Lower CI
+      formatNumberForCSV(row.ciHigh), // Upper CI
+      row.error ? 'Error' : (row.isSignificant ? 'Yes' : 'No'), // Simplified significance
       row.error ? `"${row.error.replace(/"/g, '""')}"` : '' // Escape quotes in errors
     ];
     csvRows.push(values.join(','));
