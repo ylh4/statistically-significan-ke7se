@@ -861,43 +861,53 @@ export default function DisparityCalculator() {
 
                                       <div className="col-span-1 sm:col-span-2 border-t pt-3 mt-2">
                                            {/* Use a simplified table for better alignment */}
-                                          <div className="grid grid-cols-[max-content_1fr_1fr_max-content] gap-x-4 gap-y-1 text-sm"> {/* Adjusted grid columns */}
-                                               {/* Headers */}
-                                               <div className="font-medium pl-0">Test</div>
-                                               <div className="font-medium text-right">Statistic</div>
-                                               <div className="font-medium text-right">P-Value</div>
-                                               <div className="font-medium text-right pr-0">Interpretation (vs α)</div>{/* Clarified interpretation context */}
+                                          <Table>
+                                              <TableHeader className="border-b-0"> {/* Remove border from header */}
+                                                  <TableRow className="border-b-0 hover:bg-transparent"> {/* Remove border and hover effect */}
+                                                      <TableHead className="font-medium pl-0 h-auto py-1">Test</TableHead>
+                                                      <TableHead className="font-medium text-right h-auto py-1">Statistic</TableHead>
+                                                      <TableHead className="font-medium text-right h-auto py-1">P-Value</TableHead>
+                                                      <TableHead className="font-medium text-right pr-0 h-auto py-1">Interpretation (vs α)</TableHead>
+                                                  </TableRow>
+                                              </TableHeader>
+                                              <TableBody>
+                                                   {/* Chi-square */}
+                                                   <TableRow className="border-b-0 hover:bg-transparent">
+                                                       <TableCell className="font-medium pl-0 py-1">Chi-square</TableCell>
+                                                       <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</TableCell>
+                                                       <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                           {formatScientific(reportResults.overallStats.chiSquare.pValue)}
+                                                       </TableCell>
+                                                        <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                            {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
+                                                        </TableCell>
+                                                   </TableRow>
 
-                                               {/* Chi-square */}
-                                               <div className="font-medium pl-0">Chi-square</div>
-                                               <div className="text-right">{formatDecimal(reportResults.overallStats.chiSquare.statistic)}</div>
-                                               <div className={cn("text-right", reportResults.overallStats.chiSquare.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                   {formatScientific(reportResults.overallStats.chiSquare.pValue)}
-                                               </div>
-                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
-                                                    {renderInterpretation(reportResults.overallStats.chiSquare.pValue, reportResults.overallStats.limitAlpha)}
-                                                </div>
+                                                   {/* Chi-square (Yates) */}
+                                                    <TableRow className="border-b-0 hover:bg-transparent">
+                                                        <TableCell className="font-medium pl-0 py-1">Chi-square (Yates)</TableCell>
+                                                        <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</TableCell>
+                                                        <TableCell className={cn("text-right py-1", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                           {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
+                                                        </TableCell>
+                                                         <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                              {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
+                                                          </TableCell>
+                                                    </TableRow>
 
-                                               {/* Chi-square (Yates) */}
-                                               <div className="font-medium pl-0">Chi-square (Yates)</div>
-                                               <div className="text-right">{formatDecimal(reportResults.overallStats.chiSquareYates.statistic)}</div>
-                                               <div className={cn("text-right", reportResults.overallStats.chiSquareYates.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                   {formatScientific(reportResults.overallStats.chiSquareYates.pValue)}
-                                               </div>
-                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
-                                                     {renderInterpretation(reportResults.overallStats.chiSquareYates.pValue, reportResults.overallStats.limitAlpha)}
-                                                 </div>
-
-                                               {/* G-Test */}
-                                               <div className="font-medium pl-0">G-Test</div>
-                                               <div className="text-right">{formatDecimal(reportResults.overallStats.gTest.statistic)}</div>
-                                               <div className={cn("text-right", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
-                                                   {formatScientific(reportResults.overallStats.gTest.pValue)}
-                                               </div>
-                                                <div className="text-right pr-0 text-wrap max-w-xs"> {/* Added text-wrap and max-width */}
-                                                   {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
-                                               </div>
-                                          </div>
+                                                   {/* G-Test */}
+                                                    <TableRow className="border-b-0 hover:bg-transparent">
+                                                        <TableCell className="font-medium pl-0 py-1">G-Test</TableCell>
+                                                        <TableCell className="text-right py-1">{formatDecimal(reportResults.overallStats.gTest.statistic)}</TableCell>
+                                                        <TableCell className={cn("text-right py-1", reportResults.overallStats.gTest.pValue < reportResults.overallStats.limitAlpha ? 'text-destructive font-semibold' : '')}>
+                                                           {formatScientific(reportResults.overallStats.gTest.pValue)}
+                                                        </TableCell>
+                                                         <TableCell className="text-right pr-0 py-1 text-wrap max-w-xs">
+                                                            {renderInterpretation(reportResults.overallStats.gTest.pValue, reportResults.overallStats.limitAlpha)}
+                                                        </TableCell>
+                                                    </TableRow>
+                                              </TableBody>
+                                          </Table>
                                       </div>
                                   </div>
                              </div>
@@ -961,6 +971,64 @@ export default function DisparityCalculator() {
                            )}
 
 
+                         {/* Section for Comparison to Reference Categories */}
+                          {reportResults?.contingencySummary && reportResults.contingencySummary.length >= 2 && selectedReferenceCategories.length > 0 && reportResults.overallStats && reportResults.overallStats.numComparisons > 0 && (
+                             <div className="space-y-4">
+                                 <h3 className="text-lg font-semibold text-secondary-foreground mb-2">Comparison to Reference Categories</h3>
+                                 {selectedReferenceCategories
+                                      .filter(refName => reportResults.contingencySummary.some(g => g.name === refName)) // Filter out refs no longer in groups
+                                      .map(referenceCategory => {
+                                         const referenceGroup = reportResults.contingencySummary.find(g => g.name === referenceCategory);
+                                         const otherGroups = reportResults.contingencySummary.filter(g => g.name !== referenceCategory);
+                                         const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / Math.max(1, reportResults.overallStats?.numComparisons ?? 1);
+
+                                         if (!referenceGroup) return null; // Should not happen due to filter, but safe check
+
+                                         return (
+                                             <div key={referenceCategory} className="p-4 border rounded-md bg-card mb-4">
+                                                 <h4 className="text-md font-semibold text-secondary-foreground border-b pb-1 mb-3">Reference: {referenceCategory}</h4>
+                                                 <div className="overflow-x-auto">
+                                                      <Table>
+                                                          <TableHeader className="border-b-0">
+                                                               <TableRow className="border-b-0 hover:bg-transparent">
+                                                                   <TableHead className="pl-0 h-auto py-1">Comparison Group</TableHead>
+                                                                   <TableHead className="text-right h-auto py-1">Corrected P-Value</TableHead>
+                                                                   <TableHead className="text-right pr-0 h-auto py-1">Interpretation (vs α_bonf)</TableHead>
+                                                               </TableRow>
+                                                          </TableHeader>
+                                                          <TableBody>
+                                                               {otherGroups.length > 0 ? otherGroups
+                                                                     .sort((a, b) => a.name.localeCompare(b.name)) // Sort comparison groups
+                                                                     .map(comparisonGroup => {
+                                                                          const pValue = reportResults.pairwiseResultsMatrix?.[referenceCategory]?.[comparisonGroup.name];
+                                                                          const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < correctedAlpha;
+
+                                                                          return (
+                                                                               <TableRow key={comparisonGroup.name} className="border-b-0 hover:bg-transparent">
+                                                                                   <TableCell className="font-medium pl-0 py-1">{comparisonGroup.name}</TableCell>
+                                                                                   <TableCell className={cn("text-right py-1", isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground')}>
+                                                                                       {formatScientific(pValue, 3)}
+                                                                                   </TableCell>
+                                                                                    <TableCell className="text-right pr-0 py-1">
+                                                                                        {renderInterpretation(pValue, correctedAlpha, true)} {/* Pass true for Bonferroni context */}
+                                                                                    </TableCell>
+                                                                               </TableRow>
+                                                                          );
+                                                               }) : (
+                                                                    <TableRow className="border-b-0 hover:bg-transparent">
+                                                                         <TableCell colSpan={3} className="text-center text-muted-foreground italic py-2">No other groups to compare.</TableCell>
+                                                                    </TableRow>
+                                                               )}
+                                                          </TableBody>
+                                                      </Table>
+                                                 </div>
+                                             </div>
+                                         );
+                                 })}
+                             </div>
+                          )}
+
+
                          {!reportResults && !calculationError && fields.length >= 2 && ( // Show only if enough categories exist
                              <p className="text-center text-muted-foreground italic">Generate a report to see the results here.</p>
                          )}
@@ -975,3 +1043,4 @@ export default function DisparityCalculator() {
  );
 }
 
+    
