@@ -1,7 +1,7 @@
-
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { MultiComparisonResults, MultiComparisonInputs, formatScientific, formatDecimal, formatPercent } from "./calculations"; // Import necessary types and formatters
+import type { MultiComparisonResults, MultiComparisonInputs } from "./calculations"; // Import necessary types
+import { formatScientific, formatDecimal, formatPercent } from "./calculations"; // Import formatters
 
 
 export function cn(...inputs: ClassValue[]) {
@@ -37,6 +37,8 @@ export function exportToCSV(
   // --- Input Parameters Section ---
   csvRows.push("Input Parameters");
   csvRows.push(`Significance Level (α),${escapeCSV(inputData.alpha)}`);
+  // Include selected reference categories
+  csvRows.push(`Selected Reference Category(ies),${escapeCSV(inputData.referenceCategories.join('; '))}`);
   csvRows.push(""); // Blank row
 
   // --- Categories Input Section ---
@@ -82,7 +84,7 @@ export function exportToCSV(
     csvRows.push(""); // separator
 
     // Chi-square
-    csvRows.push("Test,Statistic,P-Value,Interpretation");
+    csvRows.push("Test,Statistic,P-Value,Interpretation (vs α)"); // Clarified interpretation
     csvRows.push(
       `Chi-square,${escapeCSV(formatDecimal(stats.chiSquare.statistic))},${escapeCSV(formatScientific(stats.chiSquare.pValue))},${escapeCSV(stats.chiSquare.interpretation)}`
     );
@@ -98,11 +100,15 @@ export function exportToCSV(
   }
 
   // --- Pairwise Comparisons Matrix Section ---
-  if (reportData.pairwiseResultsMatrix && groupNames.length > 0) {
+  if (reportData.pairwiseResultsMatrix && groupNames.length > 0 && reportData.overallStats) {
     csvRows.push("P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction");
+     const correctedAlpha = reportData.overallStats.limitAlpha / reportData.overallStats.numComparisons;
+     csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatDecimal(correctedAlpha, 4))}`);
+     csvRows.push(""); // Blank row
+
 
     // Matrix Header Row
-    const matrixHeader = ["", ...groupNames.map(name => escapeCSV(name))];
+    const matrixHeader = ["Category", ...groupNames.map(name => escapeCSV(name))];
     csvRows.push(matrixHeader.join(','));
 
     // Matrix Data Rows
@@ -110,14 +116,46 @@ export function exportToCSV(
       const rowValues = [escapeCSV(rowName)];
       groupNames.forEach(colName => {
         const pValue = reportData.pairwiseResultsMatrix?.[rowName]?.[colName];
-        // Format p-value or leave blank/NA if null/NaN or lower triangle
-         const isEmptyCell = groupNames.indexOf(rowName) > groupNames.indexOf(colName);
-         const formattedPValue = (pValue === null || isNaN(pValue as number) || isEmptyCell) ? "" : formatScientific(pValue as number);
+        // Format p-value or indicate self/error
+        let formattedPValue = "N/A"; // Default for errors or invalid
+        if (rowName === colName) {
+             formattedPValue = "1.000E+0"; // Or "-" or "" for diagonal
+        } else if (pValue !== null && !isNaN(pValue as number)) {
+             formattedPValue = formatScientific(pValue as number);
+        }
         rowValues.push(escapeCSV(formattedPValue));
       });
       csvRows.push(rowValues.join(','));
     });
     csvRows.push(""); // Blank row
+
+     // --- Pairwise Interpretation (based on selected references) ---
+     if (inputData.referenceCategories.length > 0) {
+        csvRows.push("Pairwise Interpretation (vs Selected References)");
+         csvRows.push("Reference Category,Comparison Category,Corrected P-Value,Interpretation (vs α_bonf)");
+
+         inputData.referenceCategories
+            .filter(refName => groupNames.includes(refName)) // Ensure ref exists
+            .sort()
+            .forEach(refName => {
+                groupNames
+                    .filter(compName => compName !== refName)
+                    .sort()
+                    .forEach(compName => {
+                        const pValue = reportData.pairwiseResultsMatrix?.[refName]?.[compName];
+                        let interpretation = "N/A";
+                        if (pValue !== null && !isNaN(pValue as number)) {
+                             interpretation = pValue < correctedAlpha ? "Statistically different" : "Not statistically different";
+                        }
+                        csvRows.push(
+                           `${escapeCSV(refName)},${escapeCSV(compName)},${escapeCSV(formatScientific(pValue))},${escapeCSV(interpretation)}`
+                        );
+                    });
+         });
+         csvRows.push(""); // Blank row
+     }
+
+
   }
 
    // --- Errors Section ---
@@ -159,11 +197,11 @@ interface GroupInput {
 interface FormValues {
   alpha: number;
   groups: GroupInput[];
+  referenceCategories: string[]; // Ensure this is defined
 }
 
 // Assuming formatters are imported or defined in calculations.ts and exported
-declare function formatScientific(value: number | null | undefined, significantDigits?: number): string;
-declare function formatDecimal(value: number | null | undefined, decimalPlaces?: number): string;
-declare function formatPercent(value: number | null | undefined, decimalPlaces?: number): string;
-
+// declare function formatScientific(value: number | null | undefined, significantDigits?: number): string;
+// declare function formatDecimal(value: number | null | undefined, decimalPlaces?: number): string;
+// declare function formatPercent(value: number | null | undefined, decimalPlaces?: number): string;
 
