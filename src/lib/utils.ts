@@ -1,21 +1,53 @@
+
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { CalculationResult } from "./calculations"; // Assuming results interface is here
+import type { CalculationResult, CalculationInputs } from "./calculations"; // Import CalculationInputs
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Helper function to safely escape CSV fields
+function escapeCSV(field: string | number | null | undefined): string {
+    if (field === null || field === undefined) {
+        return '';
+    }
+    const stringField = String(field);
+    // Escape double quotes by doubling them and wrap the field in double quotes if it contains commas, double quotes, or newlines
+    if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+        return `"${stringField.replace(/"/g, '""')}"`;
+    }
+    return stringField;
+}
+
 
 // Function to convert array of objects to CSV string and trigger download
-export function exportToCSV(data: CalculationResult[], filename: string = 'disparity-results.csv', referenceCategoryName?: string) {
-  if (!data || data.length === 0) {
-    console.error("No data provided for CSV export.");
-    return;
-  }
+export function exportToCSV(
+    resultsData: CalculationResult[],
+    inputData: CalculationInputs,
+    filename: string = 'disparity-results.csv'
+) {
+  const csvRows = [];
 
-  // Define CSV headers based on the updated table display
-  const headers = [
+  // --- Input Parameters Section ---
+  csvRows.push("Input Parameters"); // Section header
+  csvRows.push(`Total Sample Size (N),${escapeCSV(inputData.N)}`);
+  csvRows.push(`Significance Level (α),${escapeCSV(inputData.alpha)}`);
+  csvRows.push(`Reference Category,${escapeCSV(inputData.referenceCategoryName)}`);
+  csvRows.push(""); // Blank row for separation
+
+  // --- Categories Section ---
+  csvRows.push("Categories"); // Section header
+  csvRows.push("Category Name,Count"); // Sub-headers
+  inputData.categories.forEach(cat => {
+    csvRows.push(`${escapeCSV(cat.name)},${escapeCSV(cat.count)}`);
+  });
+  csvRows.push(""); // Blank row for separation
+
+  // --- Results Section ---
+  csvRows.push("Calculation Results"); // Section header
+   // Define CSV headers based on the updated table display
+  const resultsHeaders = [
     "Comparison Group", // Changed Header
     "Proportion (p)", // Simplified Header
     "Difference (δ)",
@@ -23,11 +55,13 @@ export function exportToCSV(data: CalculationResult[], filename: string = 'dispa
     "Z-Statistic",
     "Lower CI", // Keep separate for CSV clarity
     "Upper CI", // Keep separate for CSV clarity
-    "Significant?",
-    "Error" // Include error column
+    "Statistically Significant?", // Consistent header
+    "Notes" // Consistent header (for errors)
   ];
+  csvRows.push(resultsHeaders.join(',')); // Header row for results
 
-  // Helper to format numbers, handling NaN and potential undefined
+
+  // Helper to format numbers, handling NaN and potential undefined for results table
    const formatNumberForCSV = (num: number | undefined | null): string => {
        if (num === undefined || num === null || isNaN(num)) {
            return 'N/A';
@@ -39,27 +73,27 @@ export function exportToCSV(data: CalculationResult[], filename: string = 'dispa
        return num.toFixed(6); // Increased precision for CSV export
    };
 
-
-  const csvRows = [
-    headers.join(',') // Header row
-  ];
-
   // Convert each result object to a CSV row
-  data.forEach(row => {
-    // Order matters, ensure it matches headers
-    const values = [
-      `"${row.categoryName.replace(/"/g, '""')}"`, // Escape quotes in names
-      formatNumberForCSV(row.pi),
-      formatNumberForCSV(row.delta),
-      formatNumberForCSV(row.SE),
-      formatNumberForCSV(row.zStat),
-      formatNumberForCSV(row.ciLow), // Lower CI
-      formatNumberForCSV(row.ciHigh), // Upper CI
-      row.error ? 'Error' : (row.isSignificant ? 'Yes' : 'No'), // Simplified significance
-      row.error ? `"${row.error.replace(/"/g, '""')}"` : '' // Escape quotes in errors
-    ];
-    csvRows.push(values.join(','));
-  });
+  if (resultsData && resultsData.length > 0) {
+      resultsData.forEach(row => {
+        // Order matters, ensure it matches resultsHeaders
+        const values = [
+          escapeCSV(row.categoryName), // Use helper for escaping
+          formatNumberForCSV(row.pi),
+          formatNumberForCSV(row.delta),
+          formatNumberForCSV(row.SE),
+          formatNumberForCSV(row.zStat),
+          formatNumberForCSV(row.ciLow), // Lower CI
+          formatNumberForCSV(row.ciHigh), // Upper CI
+          row.error ? 'Error' : (row.isSignificant ? 'Yes' : 'No'), // Simplified significance
+          escapeCSV(row.error ?? '') // Use helper and handle potential undefined error
+        ];
+        csvRows.push(values.join(','));
+      });
+  } else {
+     csvRows.push("No comparison results generated (or only errors occurred)."); // Indicate if no results
+  }
+
 
   const csvString = csvRows.join('\n');
 
@@ -77,6 +111,7 @@ export function exportToCSV(data: CalculationResult[], filename: string = 'dispa
     URL.revokeObjectURL(url); // Clean up
   } else {
     console.error("CSV download not supported in this browser.");
-    // Fallback or message to user
+    // Fallback or message to user - Consider adding a toast here too
+    throw new Error("CSV download not supported."); // Throw error to be caught by handler
   }
 }

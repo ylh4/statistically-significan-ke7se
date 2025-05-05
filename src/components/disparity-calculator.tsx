@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { ChangeEvent, FormEvent } from 'react';
@@ -40,7 +41,7 @@ const formSchema = z.object({
     .positive("Significance Level must be positive") // Must be > 0
     .lt(1, "Significance Level must be less than 1") // Must be < 1
     .refine(val => val >= 0.0001, { message: "Significance Level must be at least 0.0001" }) // Practical lower bound
-    .refine(val => val <= 0.9999, { message: "Significance Level must be at most 0.9999" }), // Practical upper bound - Added 'val' argument
+    .refine(val => val <= 0.9999, { message: "Significance Level must be at most 0.9999" }), // Practical upper bound
   categories: z.array(categorySchema).min(2, "At least two categories are required"),
   referenceCategoryName: z.string().min(1, "Please select a reference category"),
 }).refine(data => {
@@ -204,31 +205,39 @@ export default function DisparityCalculator() {
      });
   };
 
-  const handleExport = () => {
-      if (results.length === 0) {
+ const handleExport = () => {
+      if (results.length === 0 && !calculationError) { // Only fail if no results AND no overall calc error
            toast({
                 title: "Export Failed",
-                description: "No results to export.",
+                description: "No results available to export.",
                 variant: "destructive",
            });
           return;
       }
     try {
-        // Pass the reference category name for inclusion in the CSV
-        exportToCSV(results, `disparity-results_${form.getValues('referenceCategoryName')}.csv`, form.getValues('referenceCategoryName'));
+        const formValues = form.getValues(); // Get all current form values
+        const inputData = {
+             N: formValues.N,
+             alpha: formValues.alpha,
+             categories: formValues.categories,
+             referenceCategoryName: formValues.referenceCategoryName,
+        };
+        // Pass inputData along with results
+        exportToCSV(results, inputData, `disparity-results_${formValues.referenceCategoryName || 'data'}.csv`); // Use 'data' if ref name empty
          toast({
             title: "Export Successful",
-            description: "Results exported to CSV.",
+            description: "Data and results exported to CSV.",
          });
     } catch (error) {
         console.error("CSV Export failed:", error);
          toast({
             title: "Export Failed",
-            description: "Could not export results to CSV.",
+            description: "Could not export data to CSV.",
             variant: "destructive",
          });
     }
   };
+
 
   // Format numbers, handling NaN and Infinity
   const formatNumber = (num: number | undefined | null, decimals: number = 4): string => {
@@ -273,13 +282,13 @@ export default function DisparityCalculator() {
                      <Input
                        id="alpha"
                        type="number"
-                       step="0.001"
+                       step="0.001" // Allow finer steps
                        min="0.0001"
                        max="0.9999"
                        value={value ?? ''} // Ensure value is not undefined/null for input
                        onChange={(e) => {
                           const numVal = e.target.value === '' ? null : parseFloat(e.target.value);
-                          onChange(numVal); // Pass null or number to react-hook-form
+                           onChange(numVal); // Pass null or number to react-hook-form
                        }}
                        onBlur={onBlur}
                        ref={ref}
@@ -406,7 +415,7 @@ export default function DisparityCalculator() {
                     type="button"
                     variant="outline"
                     onClick={handleExport}
-                    disabled={results.length === 0}
+                    disabled={results.length === 0 && !calculationError} // Enable export even if only errors exist
                     className="ml-auto"
                 >
                     <Download className="mr-2 h-4 w-4" /> Export CSV
