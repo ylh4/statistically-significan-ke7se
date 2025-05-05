@@ -37,11 +37,13 @@ const formSchema = z.object({
     .min(30, "Total Sample Size (N) must be at least 30"),
   alpha: z.coerce
     .number({ invalid_type_error: "Significance Level must be a number" })
-    .positive("Significance Level must be positive")
-    .lt(1, "Significance Level must be less than 1"),
+    .positive("Significance Level must be positive") // Ensures > 0
+    .lt(1, "Significance Level must be less than 1"), // Ensures < 1
   categories: z.array(categorySchema).min(2, "At least two categories are required"),
   referenceCategoryName: z.string().min(1, "Please select a reference category"),
 }).refine(data => {
+    // Ensure N is a valid number before proceeding
+    if (isNaN(data.N)) return false;
     const totalCount = data.categories.reduce((sum, cat) => sum + (isNaN(cat.count) ? 0 : cat.count), 0);
     return totalCount === data.N;
 }, {
@@ -94,10 +96,14 @@ export default function DisparityCalculator() {
   }, [categoryOptions, watchReference, form]);
 
   // Recalculate total count for validation feedback
-  const currentTotalCount = useMemo(() => {
+   const currentTotalCount = useMemo(() => {
+     // Ensure counts are treated as numbers, default to 0 if invalid
      return watchCategories.reduce((sum, cat) => sum + (isNaN(cat.count) ? 0 : Number(cat.count)), 0);
-  }, [watchCategories]);
-  const countMatchesN = currentTotalCount === watchN;
+   }, [watchCategories]);
+
+   // Check if N is a valid number before comparing
+   const nValue = typeof watchN === 'number' && !isNaN(watchN) ? watchN : 0;
+   const countMatchesN = nValue > 0 && currentTotalCount === nValue;
 
   const onSubmit = (data: FormValues) => {
     setCalculationError(null);
@@ -191,7 +197,7 @@ export default function DisparityCalculator() {
               <Input
                 id="N"
                 type="number"
-                min="30"
+                min="30" // Keep browser min for usability, Zod enforces >= 30
                 step="1"
                 {...form.register("N")}
                 className={cn(form.formState.errors.N ? "border-destructive" : "")}
@@ -203,9 +209,8 @@ export default function DisparityCalculator() {
               <Input
                 id="alpha"
                 type="number"
-                min="0.00001"
-                max="0.99999"
-                step="0.01"
+                // Remove min/max/step to rely primarily on Zod and allow easier typing
+                // placeholder="e.g., 0.05" // Optional placeholder
                 {...form.register("alpha")}
                  className={cn(form.formState.errors.alpha ? "border-destructive" : "")}
               />
@@ -233,7 +238,7 @@ export default function DisparityCalculator() {
                         <Input
                         id={`categories.${index}.count`}
                         type="number"
-                        min="0"
+                        min="0" // Keep non-negative constraint
                         step="1"
                         {...form.register(`categories.${index}.count`)}
                         className={cn(form.formState.errors.categories?.[index]?.count ? "border-destructive" : "")}
@@ -264,12 +269,14 @@ export default function DisparityCalculator() {
             </Button>
 
              {/* Validation message for sum of counts */}
-              {!countMatchesN && watchCategories.length > 0 && watchN > 0 && (
+              {!countMatchesN && watchCategories.length > 0 && nValue > 0 && (
                  <p className="text-sm text-destructive">
-                    Sum of counts ({currentTotalCount}) does not match Total Sample Size ({watchN || 'N/A'}).
+                    Sum of counts ({currentTotalCount}) does not match Total Sample Size ({nValue || 'N/A'}).
                  </p>
               )}
+              {/* Display root level error if refine fails */}
              {form.formState.errors.categories?.root && <p className="text-sm text-destructive">{form.formState.errors.categories.root.message}</p>}
+             {/* Display general message if not attached to root */}
              {form.formState.errors.categories && typeof form.formState.errors.categories.message === 'string' && !form.formState.errors.categories.root && <p className="text-sm text-destructive">{form.formState.errors.categories.message}</p>}
 
 
