@@ -47,6 +47,16 @@ export default {
                  border: 'hsl(var(--input-border))' // Define input-border here
              },
   			ring: 'hsl(var(--ring))',
+
+             // Custom table colors
+             'table-header': {
+                DEFAULT: 'hsl(var(--table-header-bg))',
+                foreground: 'hsl(var(--table-header-fg))',
+             },
+             'table-row-alt': 'hsl(var(--table-row-alt-bg))',
+             'table-data-tint': 'hsl(var(--table-data-tint-bg))',
+
+
   			chart: {
   				'1': 'hsl(var(--chart-1))',
   				'2': 'hsl(var(--chart-2))',

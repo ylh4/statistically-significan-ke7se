@@ -4,8 +4,8 @@ import {
 } from 'jstat'; // Using jStat for Chi-square p-value calculation
 
 
-// Input structure for each group
-export interface GroupData {
+// Input structure for each group/category
+export interface GroupInput {
     name: string;
     experienced: number; // Count of those who experienced the outcome
     notExperienced: number; // Count of those who did NOT experience the outcome
@@ -14,11 +14,18 @@ export interface GroupData {
 // Input for the overall calculation
 export interface MultiComparisonInputs {
     alpha: number;
-    groups: GroupData[];
+    groups: GroupInput[];
+}
+
+// Structure for Contingency Table Summary data
+export interface ContingencySummaryData extends GroupInput {
+    rowTotal: number;
+    percentExperienced: number;
 }
 
 // Structure for overall test results
 export interface OverallTestStats {
+    limitAlpha: number;
     degreesOfFreedom: number;
     numComparisons: number; // Number of pairwise comparisons
     chiSquare: {
@@ -26,9 +33,11 @@ export interface OverallTestStats {
         pValue: number;
         interpretation: string;
     };
-    // Yates correction is typically for 2x2 tables, not usually applied globally like this.
-    // Including as per image, but its interpretation might be nuanced. Assuming pairwise Yates for now.
-    // chiSquareYates?: { statistic: number; pValue: number; interpretation: string };
+    chiSquareYates: { // Added Yates correction results
+        statistic: number;
+        pValue: number;
+        interpretation: string;
+    };
     gTest: {
         statistic: number;
         pValue: number;
@@ -36,24 +45,18 @@ export interface OverallTestStats {
     };
 }
 
-// Structure for pairwise results (matrix)
-export interface PairwiseResult {
-    group1: string;
-    group2: string;
-    pValue: number; // Raw p-value
-    correctedPValue: number; // Bonferroni corrected p-value
-    isSignificant: boolean; // Based on corrected p-value < alpha
-    error?: string; // Optional error message for this specific pair
-}
+// Structure for pairwise results (matrix) - Storing corrected p-values
+// The keys of the outer object are the row category names.
+// The keys of the inner object are the column category names.
+// The value is the Bonferroni-corrected p-value.
+export type PairwiseResultsMatrix = Record<string, Record<string, number | null>>; // Use null for diagonal or invalid pairs
+
 
 // Overall results structure returned by the main function
 export interface MultiComparisonResults {
-    observedData: (GroupData & {
-        rowTotal: number;
-        percentExperienced: number;
-    })[];
+    contingencySummary: ContingencySummaryData[];
     overallStats: OverallTestStats | null; // Can be null if calculation fails early
-    pairwiseResults: PairwiseResult[];
+    pairwiseResultsMatrix: PairwiseResultsMatrix | null; // Matrix of corrected p-values
     errors: string[]; // General calculation errors
 }
 
@@ -65,13 +68,18 @@ export interface MultiComparisonResults {
  * Uses the upper tail probability (1 - CDF).
  */
 function chiSquarePValue(statistic: number, df: number): number {
-    if (statistic < 0 || df <= 0) {
+    if (statistic < 0 || df <= 0 || isNaN(statistic) || isNaN(df)) {
         return NaN; // Invalid input
+    }
+     if (!isFinite(statistic)) {
+        return 0; // P-value is 0 for an infinite statistic
     }
     // Use jStat's chisquare cumulative distribution function
     // Need the upper tail probability: P(X^2 > statistic) = 1 - P(X^2 <= statistic)
     try {
-        return 1 - jStat.chisquare.cdf(statistic, df);
+        // Clamp statistic slightly below Infinity if it's extremely large but finite
+        const safeStatistic = Math.min(statistic, Number.MAX_VALUE);
+        return 1 - jStat.chisquare.cdf(safeStatistic, df);
     } catch (e) {
         console.error("Error calculating chi-square p-value:", e);
         return NaN;
@@ -79,85 +87,143 @@ function chiSquarePValue(statistic: number, df: number): number {
 }
 
 /**
+ * Calculates Chi-square statistic for a k x 2 contingency table.
+ * table = [[exp1, notExp1], [exp2, notExp2], ..., [expK, notExpK]]
+ * Optionally applies Yates' correction element-wise (use cautiously for k>2).
+ */
+function calculateKx2ChiSquare(
+    groupsData: Array<{ experienced: number; notExperienced: number; rowTotal: number }>,
+    totalExperienced: number,
+    totalNotExperienced: number,
+    grandTotal: number,
+    useYates: boolean = false
+): number {
+    let chiSquareStat = 0;
+
+    if (grandTotal === 0) return 0;
+
+    groupsData.forEach(group => {
+        if (group.rowTotal > 0) {
+            const expectedExperienced = (group.rowTotal * totalExperienced) / grandTotal;
+            const expectedNotExperienced = (group.rowTotal * totalNotExperienced) / grandTotal;
+
+            // Experienced term
+            if (expectedExperienced > 0) {
+                const diff = group.experienced - expectedExperienced;
+                const yatesTerm = useYates ? 0.5 : 0;
+                const absDiff = Math.abs(diff);
+                 // Prevent negative base for power when diff is small and yates is used
+                 const correctedDiff = Math.max(0, absDiff - yatesTerm);
+                 chiSquareStat += (correctedDiff ** 2) / expectedExperienced;
+
+            } else if (group.experienced !== 0) {
+                return Infinity; // Observed count where expected is 0
+            } // else observed is 0, expected is 0, contribution is 0
+
+            // Not Experienced term
+            if (expectedNotExperienced > 0) {
+                 const diff = group.notExperienced - expectedNotExperienced;
+                 const yatesTerm = useYates ? 0.5 : 0;
+                 const absDiff = Math.abs(diff);
+                  // Prevent negative base for power
+                 const correctedDiff = Math.max(0, absDiff - yatesTerm);
+                 chiSquareStat += (correctedDiff ** 2) / expectedNotExperienced;
+            } else if (group.notExperienced !== 0) {
+                return Infinity; // Observed count where expected is 0
+            } // else observed is 0, expected is 0, contribution is 0
+        }
+    });
+
+    return chiSquareStat;
+}
+
+
+/**
+ * Calculates the G-Test statistic for a k x 2 contingency table.
+ * G = 2 * sum(O * ln(O/E))
+ */
+function calculateKx2GTest(
+    groupsData: Array<{ experienced: number; notExperienced: number; rowTotal: number }>,
+    totalExperienced: number,
+    totalNotExperienced: number,
+    grandTotal: number
+): number {
+     let gTestStat = 0;
+
+     if (grandTotal === 0) return 0;
+
+     groupsData.forEach(group => {
+         if (group.rowTotal > 0) {
+             const expectedExperienced = (group.rowTotal * totalExperienced) / grandTotal;
+             const expectedNotExperienced = (group.rowTotal * totalNotExperienced) / grandTotal;
+
+              // G-Test contribution (handle observed = 0 cases)
+             // Experienced term
+             if (group.experienced > 0) {
+                  if (expectedExperienced > 0) {
+                     gTestStat += group.experienced * Math.log(group.experienced / expectedExperienced);
+                  } else {
+                      // Observed > 0 but Expected = 0 -> infinite statistic
+                      return Infinity;
+                  }
+             } // If observed is 0, contribution is 0 * log(0/E) = 0
+
+             // Not Experienced term
+             if (group.notExperienced > 0) {
+                 if (expectedNotExperienced > 0) {
+                     gTestStat += group.notExperienced * Math.log(group.notExperienced / expectedNotExperienced);
+                 } else {
+                     // Observed > 0 but Expected = 0 -> infinite statistic
+                     return Infinity;
+                 }
+             } // If observed is 0, contribution is 0
+         }
+     });
+
+     // Check if gTestStat became NaN or Infinity before multiplying
+     if (!isFinite(gTestStat)) {
+        return gTestStat; // Return NaN or Infinity directly
+     }
+
+     return 2 * gTestStat; // Final step for G-Test
+}
+
+/**
  * Calculates Chi-square statistic for a 2x2 contingency table.
  * table = [[a, b], [c, d]]
- * Optionally applies Yates' correction.
+ * Used for pairwise comparisons. NO Yates correction here by default.
  */
-function calculate2x2ChiSquare(table: number[][], useYates: boolean = false): {
-    statistic: number;df: number
-} {
+function calculate2x2ChiSquarePairwise(table: number[][]): number {
     const [
         [a, b],
         [c, d]
     ] = table;
     const n = a + b + c + d;
-    if (n === 0) return {
-        statistic: 0,
-        df: 1
-    };
+    if (n === 0) return 0;
 
     const row1Sum = a + b;
     const row2Sum = c + d;
     const col1Sum = a + c;
     const col2Sum = b + d;
 
-    // Calculate expected values
-    const expA = (row1Sum * col1Sum) / n;
-    const expB = (row1Sum * col2Sum) / n;
-    const expC = (row2Sum * col1Sum) / n;
-    const expD = (row2Sum * col2Sum) / n;
+    // Shortcut formula for 2x2 Chi-square (without Yates')
+    // More prone to floating point issues with very large numbers, but standard.
+    const numerator = n * Math.pow(a * d - b * c, 2);
+    const denominator = row1Sum * row2Sum * col1Sum * col2Sum;
 
-    // Check for zero expected values - leads to division by zero
-    if ([expA, expB, expC, expD].some(exp => exp === 0)) {
-        // If observed is also zero, contribution is 0. If observed is non-zero, statistic is technically Infinity.
-        // Handle practical case: if any expected is 0, chi-square is problematic.
-         if ((expA === 0 && a !== 0) || (expB === 0 && b !== 0) || (expC === 0 && c !== 0) || (expD === 0 && d !== 0)) {
-           // Return Infinity or a very large number to indicate extreme difference
-           return { statistic: Infinity, df: 1 };
-         }
-          // If expected and observed are 0, contribution is 0. If all observed are 0, stat is 0.
-         // If only some expected are 0 but corresponding observed are also 0, proceed cautiously.
+    if (denominator === 0) {
+         // This happens if a row or column total is zero.
+         // If numerator is also 0, result is NaN (or 0 by convention).
+         // If numerator is non-zero, result is Infinity.
+         return numerator === 0 ? 0 : Infinity;
     }
 
-
-    let chiSquareStat = 0;
-
-     // Standard formula - more stable than the shortcut formula, especially with Yates'
-     const terms = [
-         { obs: a, exp: expA },
-         { obs: b, exp: expB },
-         { obs: c, exp: expC },
-         { obs: d, exp: expD },
-     ];
-
-     for (const { obs, exp } of terms) {
-         if (exp === 0) {
-              if (obs !== 0) return { statistic: Infinity, df: 1 }; // Observed value where none expected
-              // else, obs is 0, contribution is 0, continue
-         } else {
-             const diff = obs - exp;
-             const yatesCorrection = useYates ? 0.5 : 0;
-             const term = (Math.abs(diff) - yatesCorrection) ** 2 / exp;
-              // Ensure the corrected difference doesn't go below zero
-             if (useYates && Math.abs(diff) <= yatesCorrection) {
-                 chiSquareStat += 0; // Term becomes 0 if correction exceeds difference
-             } else {
-                chiSquareStat += term;
-             }
-         }
-     }
-
-
-    return {
-        statistic: chiSquareStat,
-        df: 1
-    }; // df for 2x2 table is 1
+    return numerator / denominator;
 }
-
 
 // --- Main Calculation Function ---
 
-export function performMultipleComparisons(inputs: MultiComparisonInputs): MultiComparisonResults {
+export function performMultiComparisonReport(inputs: MultiComparisonInputs): MultiComparisonResults {
     const {
         alpha,
         groups
@@ -183,94 +249,79 @@ export function performMultipleComparisons(inputs: MultiComparisonInputs): Multi
 
     if (errors.length > 0) {
         return {
-            observedData: [],
+            contingencySummary: [],
             overallStats: null,
-            pairwiseResults: [],
+            pairwiseResultsMatrix: null,
             errors
         };
     }
 
-    // --- Prepare Data & Calculate Totals ---
-    const observedData = groups.map(g => ({
-        ...g,
-        rowTotal: g.experienced + g.notExperienced,
-        percentExperienced: (g.experienced + g.notExperienced) > 0 ? (g.experienced / (g.experienced + g.notExperienced)) * 100 : 0,
-    }));
+    // --- Phase 1: Prepare Contingency Table Summary Data ---
+    const contingencySummary: ContingencySummaryData[] = groups.map(g => {
+        const rowTotal = g.experienced + g.notExperienced;
+        return {
+            ...g,
+            rowTotal: rowTotal,
+            percentExperienced: rowTotal > 0 ? (g.experienced / rowTotal) * 100 : 0,
+        };
+    });
 
-    const grandTotal = observedData.reduce((sum, g) => sum + g.rowTotal, 0);
-    const totalExperienced = observedData.reduce((sum, g) => sum + g.experienced, 0);
-    const totalNotExperienced = observedData.reduce((sum, g) => sum + g.notExperienced, 0);
+    const grandTotal = contingencySummary.reduce((sum, g) => sum + g.rowTotal, 0);
+    const totalExperienced = contingencySummary.reduce((sum, g) => sum + g.experienced, 0);
+    const totalNotExperienced = contingencySummary.reduce((sum, g) => sum + g.notExperienced, 0);
 
     if (grandTotal === 0) {
          errors.push("Total number of observations is zero.");
-         return { observedData, overallStats: null, pairwiseResults: [], errors };
+         return { contingencySummary, overallStats: null, pairwiseResultsMatrix: null, errors };
     }
 
-     // Ensure all row totals are > 0 for overall tests
-    if (observedData.some(g => g.rowTotal === 0)) {
-        errors.push("One or more groups have zero total observations, which may affect overall test validity.");
-        // Decide if you want to proceed or stop. Proceeding might be okay for pairwise if *some* groups are valid.
+     // Warning if any group has zero total (affects overall tests)
+    if (contingencySummary.some(g => g.rowTotal === 0)) {
+        errors.push("Warning: One or more groups have zero total observations. Overall tests might be affected.");
     }
 
-    // --- Calculate Overall Test Statistics ---
+
+    // --- Phase 2: Calculate Overall Test Statistics ---
     let overallStats: OverallTestStats | null = null;
     try {
-        const degreesOfFreedom = numGroups - 1; // Assuming comparison across groups for one outcome variable
+        const degreesOfFreedom = numGroups - 1; // For k x 2 table
         const numComparisons = numGroups * (numGroups - 1) / 2;
 
-        // Overall Chi-square
-        let overallChiSquareStat = 0;
-        let overallGTestStat = 0;
+        // Calculate overall Chi-square (Pearson)
+        const overallChiSquareStat = calculateKx2ChiSquare(contingencySummary, totalExperienced, totalNotExperienced, grandTotal, false);
+        const chiSquareP = chiSquarePValue(overallChiSquareStat, degreesOfFreedom);
 
-        observedData.forEach(group => {
-            if (group.rowTotal > 0) { // Avoid division by zero
-                const expectedExperienced = (group.rowTotal * totalExperienced) / grandTotal;
-                const expectedNotExperienced = (group.rowTotal * totalNotExperienced) / grandTotal;
-
-                 // Chi-square contribution
-                 if (expectedExperienced > 0) {
-                     overallChiSquareStat += (group.experienced - expectedExperienced) ** 2 / expectedExperienced;
-                 } else if (group.experienced !== 0) {
-                     overallChiSquareStat = Infinity; // Observed count where expected is 0
-                 }
-                 if (expectedNotExperienced > 0) {
-                     overallChiSquareStat += (group.notExperienced - expectedNotExperienced) ** 2 / expectedNotExperienced;
-                 } else if (group.notExperienced !== 0) {
-                     overallChiSquareStat = Infinity; // Observed count where expected is 0
-                 }
+        // Calculate overall Chi-square with Yates' correction
+        // Note: Applying Yates element-wise for k>2 is debated. We implement as requested.
+        const overallChiSquareYatesStat = calculateKx2ChiSquare(contingencySummary, totalExperienced, totalNotExperienced, grandTotal, true);
+        const chiSquareYatesP = chiSquarePValue(overallChiSquareYatesStat, degreesOfFreedom);
 
 
-                // G-Test contribution (handle observed = 0 cases)
-                if (group.experienced > 0 && expectedExperienced > 0) {
-                    overallGTestStat += group.experienced * Math.log(group.experienced / expectedExperienced);
-                } else if (expectedExperienced === 0 && group.experienced !== 0) {
-                     overallGTestStat = Infinity; // Log(infinity) essentially
-                } // If group.experienced is 0, contribution is 0
+        // Calculate overall G-Test
+        const overallGTestStat = calculateKx2GTest(contingencySummary, totalExperienced, totalNotExperienced, grandTotal);
+        const gTestP = chiSquarePValue(overallGTestStat, degreesOfFreedom);
 
-                if (group.notExperienced > 0 && expectedNotExperienced > 0) {
-                    overallGTestStat += group.notExperienced * Math.log(group.notExperienced / expectedNotExperienced);
-                } else if (expectedNotExperienced === 0 && group.notExperienced !== 0) {
-                     overallGTestStat = Infinity; // Log(infinity) essentially
-                } // If group.notExperienced is 0, contribution is 0
-            }
-        });
-        overallGTestStat *= 2; // Final step for G-Test
-
-
-        const chiSquareP = isFinite(overallChiSquareStat) ? chiSquarePValue(overallChiSquareStat, degreesOfFreedom) : 0; // P-value is 0 if stat is Infinity
-        const gTestP = isFinite(overallGTestStat) ? chiSquarePValue(overallGTestStat, degreesOfFreedom) : 0; // P-value is 0 if stat is Infinity
-
-        const interpretation = (p: number) => p < alpha ?
-            "Statistically different. Potential disparity; pursue further investigation." :
-            "Not statistically different.";
+        // Define interpretation function
+        const interpretation = (p: number) => {
+             if (isNaN(p)) return "Invalid result";
+             return p < alpha ?
+                "Statistically different. Potential disparity; pursue further investigation." :
+                "Not statistically different.";
+        }
 
         overallStats = {
+            limitAlpha: alpha,
             degreesOfFreedom,
             numComparisons,
             chiSquare: {
                 statistic: overallChiSquareStat,
                 pValue: chiSquareP,
                 interpretation: interpretation(chiSquareP),
+            },
+             chiSquareYates: { // Include Yates results
+                statistic: overallChiSquareYatesStat,
+                pValue: chiSquareYatesP,
+                interpretation: interpretation(chiSquareYatesP),
             },
             gTest: {
                 statistic: overallGTestStat,
@@ -285,20 +336,37 @@ export function performMultipleComparisons(inputs: MultiComparisonInputs): Multi
         overallStats = null; // Ensure it's null if error occurs
     }
 
-    // --- Calculate Pairwise Comparisons with Bonferroni Correction ---
-    const pairwiseResults: PairwiseResult[] = [];
-    if (numGroups >= 2 && overallStats) { // Only proceed if groups exist and overall stats calculated
-         const bonferroniAlpha = alpha / overallStats.numComparisons; // Adjusted alpha for pairwise tests
+
+    // --- Phase 3: Calculate Pairwise Comparisons with Bonferroni Correction ---
+    let pairwiseResultsMatrix: PairwiseResultsMatrix | null = null;
+    if (numGroups >= 2 && overallStats && overallStats.numComparisons > 0) {
+         pairwiseResultsMatrix = {};
+         const bonferroniDenominator = overallStats.numComparisons; // Denominator for correction
+
+        // Initialize matrix
+        const groupNames = contingencySummary.map(g => g.name);
+        groupNames.forEach(rowName => {
+            pairwiseResultsMatrix![rowName] = {};
+            groupNames.forEach(colName => {
+                pairwiseResultsMatrix![rowName][colName] = null; // Initialize with null
+            });
+        });
+
 
         for (let i = 0; i < numGroups; i++) {
             for (let j = i + 1; j < numGroups; j++) {
-                const group1 = observedData[i];
-                const group2 = observedData[j];
-                const pairIdentifier = `${group1.name} vs ${group2.name}`;
-                let result: Partial < PairwiseResult > = {
-                    group1: group1.name,
-                    group2: group2.name
-                };
+                const group1 = contingencySummary[i];
+                const group2 = contingencySummary[j];
+                const name1 = group1.name;
+                const name2 = group2.name;
+
+                 // Skip if either group has zero total observation
+                 if (group1.rowTotal === 0 || group2.rowTotal === 0) {
+                    pairwiseResultsMatrix[name1][name2] = NaN; // Or another indicator for invalid pair
+                    pairwiseResultsMatrix[name2][name1] = NaN;
+                    continue;
+                 }
+
 
                 try {
                      // Create 2x2 table for the pair
@@ -307,49 +375,104 @@ export function performMultipleComparisons(inputs: MultiComparisonInputs): Multi
                         [group2.experienced, group2.notExperienced],
                      ];
 
-                      // Check if any cell makes the table invalid for chi-square (e.g., negative counts handled earlier)
-                     // Check for zero rows/columns if needed, though calculate2x2ChiSquare handles internal zeros.
-                     if (group1.rowTotal === 0 || group2.rowTotal === 0) {
-                        throw new Error("One group in the pair has zero observations.");
-                     }
+                     // Calculate pairwise Chi-square (NO Yates' here)
+                     const chiSqStatPair = calculate2x2ChiSquarePairwise(table);
+                     const pValueRaw = chiSquarePValue(chiSqStatPair, 1); // df=1 for 2x2
 
+                     // Apply Bonferroni correction
+                     const correctedPValue = Math.min(1.0, pValueRaw * bonferroniDenominator);
 
-                     // Calculate pairwise Chi-square (consider with and without Yates')
-                     // For the main pairwise table, usually *don't* use Yates' unless specified.
-                     // The image shows separate Yates results, suggesting it's a distinct calculation.
-                     // Let's provide the standard pairwise chi-square here.
-                     const { statistic: chiSqStatPair } = calculate2x2ChiSquare(table, false); // Standard Chi-Square for pairwise
-                     const pValueRaw = isFinite(chiSqStatPair) ? chiSquarePValue(chiSqStatPair, 1) : 0; // df=1 for 2x2
+                     // Store the corrected p-value in the matrix (symmetric)
+                     pairwiseResultsMatrix[name1][name2] = correctedPValue;
+                     pairwiseResultsMatrix[name2][name1] = correctedPValue;
 
-                     // Apply Bonferroni correction: Multiply p-value by num comparisons, cap at 1.0
-                     const correctedPValue = Math.min(1.0, pValueRaw * overallStats.numComparisons);
-                     const isSignificant = correctedPValue < alpha; // Compare corrected p-value to original alpha
-
-
-                     result = {
-                        ...result,
-                        pValue: pValueRaw,
-                        correctedPValue: correctedPValue,
-                        isSignificant: isSignificant,
-                     };
 
                 } catch (e: any) {
-                    console.error(`Error calculating pairwise comparison for ${pairIdentifier}:`, e);
-                    result.error = `Calculation error: ${e.message}`;
-                     result.pValue = NaN;
-                     result.correctedPValue = NaN;
-                     result.isSignificant = false;
+                    console.error(`Error calculating pairwise comparison for ${name1} vs ${name2}:`, e);
+                    // Store NaN or another indicator for error in the matrix
+                    pairwiseResultsMatrix[name1][name2] = NaN;
+                    pairwiseResultsMatrix[name2][name1] = NaN;
+                     errors.push(`Error in pairwise calculation for ${name1} vs ${name2}: ${e.message}`);
                 }
-                 pairwiseResults.push(result as PairwiseResult); // Cast as full type
             }
         }
+         // Fill diagonal with 1.000E+00 (or null/NaN as preferred)
+         groupNames.forEach(name => {
+             if (pairwiseResultsMatrix && pairwiseResultsMatrix[name]) {
+                 pairwiseResultsMatrix[name][name] = 1.0; // Represents self-comparison p-value
+             }
+         });
+    } else if (overallStats && overallStats.numComparisons === 0 && numGroups === 1) {
+        // Handle case with only one group - no comparisons possible
+        errors.push("Only one group provided, no pairwise comparisons possible.");
+    } else if (!overallStats) {
+         errors.push("Overall statistics could not be calculated, skipping pairwise comparisons.");
     }
 
 
     return {
-        observedData,
+        contingencySummary,
         overallStats,
-        pairwiseResults,
+        pairwiseResultsMatrix,
         errors
     };
+}
+
+/**
+ * Formats a number into scientific notation with a specified number of significant digits.
+ * e.g., formatScientific(0.00012345, 3) => "1.23E-4"
+ * e.g., formatScientific(12345, 3) => "1.23E+4"
+ * Handles NaN, Infinity, and zero appropriately.
+ */
+export function formatScientific(value: number | null | undefined, significantDigits: number = 3): string {
+    if (value === null || value === undefined || isNaN(value)) {
+        return "N/A";
+    }
+    if (value === 0) {
+        return `0.00${'0'.repeat(Math.max(0, significantDigits - 1))}E+0`; // Or just "0.00E+0" ? -> Let's use toExponential
+         // return (0).toExponential(significantDigits - 1).toUpperCase(); // e.g., 0.00E+0 for 3 digits
+    }
+     if (!isFinite(value)) {
+         return value > 0 ? "Infinity" : "-Infinity";
+     }
+
+    // Use toExponential for formatting
+    const exponentialString = value.toExponential(significantDigits - 1).toUpperCase(); // E.g., "1.2345E-4" -> "1.23E-4" for 3 digits
+
+     // Ensure the exponent part has a sign (+ or -)
+     const parts = exponentialString.split('E');
+     if (parts.length === 2) {
+         const exponent = parseInt(parts[1], 10);
+         const sign = exponent >= 0 ? '+' : ''; // Add '+' for non-negative exponents
+         return `${parts[0]}E${sign}${exponent}`;
+     }
+
+    return exponentialString; // Fallback if split fails (shouldn't happen for valid numbers)
+}
+
+/**
+ * Formats a number to a fixed number of decimal places.
+ * Handles NaN, Infinity.
+ */
+export function formatDecimal(value: number | null | undefined, decimalPlaces: number = 3): string {
+     if (value === null || value === undefined || isNaN(value)) {
+         return "N/A";
+     }
+      if (!isFinite(value)) {
+          return value > 0 ? "Infinity" : "-Infinity";
+      }
+     return value.toFixed(decimalPlaces);
+}
+
+/**
+ * Formats a percentage value.
+ */
+export function formatPercent(value: number | null | undefined, decimalPlaces: number = 1): string {
+     if (value === null || value === undefined || isNaN(value)) {
+         return "N/A";
+     }
+      if (!isFinite(value)) {
+          return value > 0 ? "Infinity%" : "-Infinity%";
+      }
+     return `${value.toFixed(decimalPlaces)}%`;
 }

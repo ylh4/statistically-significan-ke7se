@@ -1,7 +1,8 @@
 
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { CalculationResult, CalculationInputs } from "./calculations"; // Import CalculationInputs
+import type { MultiComparisonResults, MultiComparisonInputs, formatScientific, formatDecimal, formatPercent } from "./calculations"; // Import necessary types and formatters
+
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -20,88 +21,119 @@ function escapeCSV(field: string | number | null | undefined): string {
     return stringField;
 }
 
-
-// Function to convert array of objects to CSV string and trigger download
+// Updated function to convert MultiComparisonResults to CSV string and trigger download
 export function exportToCSV(
-    resultsData: CalculationResult[],
-    inputData: CalculationInputs,
-    filename: string = 'disparity-results.csv'
+    reportData: MultiComparisonResults | null, // Expects the full report object
+    inputData: FormValues, // Use FormValues type from disparity-calculator
+    filename: string = 'statistical-report.csv'
 ) {
-  const csvRows = [];
+  if (!reportData) {
+      throw new Error("No report data available to export.");
+  }
+
+  const csvRows: string[] = [];
+  const groupNames = reportData.contingencySummary?.map(g => g.name) ?? [];
 
   // --- Input Parameters Section ---
-  csvRows.push("Input Parameters"); // Section header
-  csvRows.push(`Total Sample Size (N),${escapeCSV(inputData.N)}`);
+  csvRows.push("Input Parameters");
   csvRows.push(`Significance Level (α),${escapeCSV(inputData.alpha)}`);
-  csvRows.push(`Reference Category,${escapeCSV(inputData.referenceCategoryName)}`);
-  csvRows.push(""); // Blank row for separation
+  csvRows.push(""); // Blank row
 
-  // --- Categories Section ---
-  csvRows.push("Categories"); // Section header
-  csvRows.push("Category Name,Count"); // Sub-headers
-  inputData.categories.forEach(cat => {
-    csvRows.push(`${escapeCSV(cat.name)},${escapeCSV(cat.count)}`);
+  // --- Categories Input Section ---
+  csvRows.push("Input Categories (Groups)");
+  csvRows.push("Category Name,# Experienced,# Not Experienced");
+  inputData.groups.forEach(group => {
+    csvRows.push(`${escapeCSV(group.name)},${escapeCSV(group.experienced)},${escapeCSV(group.notExperienced)}`);
   });
-  csvRows.push(""); // Blank row for separation
+  csvRows.push(""); // Blank row
 
-  // --- Results Section ---
-  csvRows.push("Calculation Results"); // Section header
-   // Define CSV headers based on the updated table display
-   const ciLevel = (1 - inputData.alpha) * 100;
-  const resultsHeaders = [
-    "Comparison Group",
-    "Proportion (p)",
-    "Difference (δ)",
-    "Std. Error (SE)",
-    "Z-Statistic",
-    `${ciLevel}% CI Lower`, // Dynamic CI header part
-    `${ciLevel}% CI Upper`, // Dynamic CI header part
-    "Statistically Significant?",
-    "Notes"
-  ];
-  csvRows.push(resultsHeaders.join(',')); // Header row for results
+  // --- Contingency Table Summary Section ---
+  if (reportData.contingencySummary && reportData.contingencySummary.length > 0) {
+    csvRows.push("Contingency Table Summary");
+    const summaryHeaders = [
+      "Category",
+      "# Did NOT Experience",
+      "# Experienced",
+      "Row Subtotal",
+      "% Experienced"
+    ];
+    csvRows.push(summaryHeaders.join(','));
 
-
-  // Helper to format numbers, handling NaN and potential undefined for results table
-   const formatNumberForCSV = (num: number | undefined | null): string => {
-       if (num === undefined || num === null || isNaN(num)) {
-           return 'N/A';
-       }
-        // Handle Infinity cases for zStat
-       if (num === Infinity) return 'Infinity';
-       if (num === -Infinity) return '-Infinity';
-       // Use enough precision for CSV
-       return num.toFixed(6); // Increased precision for CSV export
-   };
-
-  // Convert each result object to a CSV row
-  if (resultsData && resultsData.length > 0) {
-      resultsData.forEach(row => {
-        // Order matters, ensure it matches resultsHeaders
-        const values = [
-          escapeCSV(row.categoryName), // Use helper for escaping
-          formatNumberForCSV(row.pi),
-          formatNumberForCSV(row.delta),
-          formatNumberForCSV(row.SE),
-          formatNumberForCSV(row.zStat),
-          formatNumberForCSV(row.ciLow), // Lower CI
-          formatNumberForCSV(row.ciHigh), // Upper CI
-          row.error ? 'Error' : (row.isSignificant ? 'Yes' : 'No'), // Simplified significance
-          escapeCSV(row.error ?? '') // Use helper and handle potential undefined error
-        ];
-        csvRows.push(values.join(','));
-      });
-  } else {
-     csvRows.push("No comparison results generated (or only errors occurred)."); // Indicate if no results
+    reportData.contingencySummary.forEach(row => {
+      const values = [
+        escapeCSV(row.name),
+        escapeCSV(row.notExperienced),
+        escapeCSV(row.experienced),
+        escapeCSV(row.rowTotal),
+        escapeCSV(formatPercent(row.percentExperienced)) // Use formatter
+      ];
+      csvRows.push(values.join(','));
+    });
+    csvRows.push(""); // Blank row
   }
+
+  // --- Overall Test Statistics Section ---
+  if (reportData.overallStats) {
+    const stats = reportData.overallStats;
+    csvRows.push("Overall Test Results");
+    csvRows.push(`Limit (Significance Level α),${escapeCSV(formatDecimal(stats.limitAlpha, 4))}`);
+    csvRows.push(`Degrees of Freedom,${escapeCSV(stats.degreesOfFreedom)}`);
+    csvRows.push(`# of Pairwise Comparisons,${escapeCSV(stats.numComparisons)}`);
+    csvRows.push(""); // separator
+
+    // Chi-square
+    csvRows.push("Test,Statistic,P-Value,Interpretation");
+    csvRows.push(
+      `Chi-square,${escapeCSV(formatDecimal(stats.chiSquare.statistic))},${escapeCSV(formatScientific(stats.chiSquare.pValue))},${escapeCSV(stats.chiSquare.interpretation)}`
+    );
+    // Chi-square (Yates)
+     csvRows.push(
+       `Chi-square (Yates),${escapeCSV(formatDecimal(stats.chiSquareYates.statistic))},${escapeCSV(formatScientific(stats.chiSquareYates.pValue))},${escapeCSV(stats.chiSquareYates.interpretation)}`
+     );
+    // G-Test
+    csvRows.push(
+      `G-Test,${escapeCSV(formatDecimal(stats.gTest.statistic))},${escapeCSV(formatScientific(stats.gTest.pValue))},${escapeCSV(stats.gTest.interpretation)}`
+    );
+    csvRows.push(""); // Blank row
+  }
+
+  // --- Pairwise Comparisons Matrix Section ---
+  if (reportData.pairwiseResultsMatrix && groupNames.length > 0) {
+    csvRows.push("P-Values of Pairwise Chi-Square Comparisons with Bonferroni Correction");
+
+    // Matrix Header Row
+    const matrixHeader = ["", ...groupNames.map(name => escapeCSV(name))];
+    csvRows.push(matrixHeader.join(','));
+
+    // Matrix Data Rows
+    groupNames.forEach(rowName => {
+      const rowValues = [escapeCSV(rowName)];
+      groupNames.forEach(colName => {
+        const pValue = reportData.pairwiseResultsMatrix?.[rowName]?.[colName];
+        // Format p-value or leave blank/NA if null/NaN or lower triangle
+         const isEmptyCell = groupNames.indexOf(rowName) > groupNames.indexOf(colName);
+         const formattedPValue = (pValue === null || isNaN(pValue as number) || isEmptyCell) ? "" : formatScientific(pValue as number);
+        rowValues.push(escapeCSV(formattedPValue));
+      });
+      csvRows.push(rowValues.join(','));
+    });
+    csvRows.push(""); // Blank row
+  }
+
+   // --- Errors Section ---
+    if (reportData.errors && reportData.errors.length > 0) {
+        csvRows.push("Calculation Errors/Warnings");
+        reportData.errors.forEach(err => csvRows.push(escapeCSV(err)));
+        csvRows.push("");
+    }
 
 
   const csvString = csvRows.join('\n');
 
-  // Create a Blob and trigger download
-  const blob = new Blob([`\uFEFF${csvString}`], { type: 'text/csv;charset=utf-8;' }); // Add BOM for Excel compatibility
+  // --- Download Trigger ---
+  const blob = new Blob([`\uFEFF${csvString}`], { type: 'text/csv;charset=utf-8;' }); // Add BOM
   const link = document.createElement('a');
-  if (link.download !== undefined) { // Feature detection
+  if (link.download !== undefined) {
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
@@ -109,10 +141,29 @@ export function exportToCSV(
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url); // Clean up
+    URL.revokeObjectURL(url);
   } else {
     console.error("CSV download not supported in this browser.");
-    // Fallback or message to user - Consider adding a toast here too
-    throw new Error("CSV download not supported."); // Throw error to be caught by handler
+    throw new Error("CSV download not supported.");
   }
 }
+
+// Re-declare types needed within this file if not imported implicitly or explicitly elsewhere
+// (This might be needed depending on your TS config and how types flow)
+interface GroupInput {
+  name: string;
+  experienced: number;
+  notExperienced: number;
+}
+
+interface FormValues {
+  alpha: number;
+  groups: GroupInput[];
+}
+
+// Assuming formatters are imported or defined in calculations.ts and exported
+declare function formatScientific(value: number | null | undefined, significantDigits?: number): string;
+declare function formatDecimal(value: number | null | undefined, decimalPlaces?: number): string;
+declare function formatPercent(value: number | null | undefined, decimalPlaces?: number): string;
+
+
