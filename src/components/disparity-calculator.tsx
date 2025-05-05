@@ -426,9 +426,9 @@ export default function DisparityCalculator() {
         // Calculate the dimensions and position of the image on the PDF
         const effectiveImgWidth = imgWidth * ratio;
         const effectiveImgHeight = imgHeight * ratio;
-         // Center the image horizontally and vertically within the margins
+         // Center the image horizontally and position near top with margin
          const imgX = margin + (availableWidth - effectiveImgWidth) / 2;
-         const imgY = margin + (availableHeight - effectiveImgHeight) / 2;
+         const imgY = margin; // Place near top margin
 
 
        // Add the image to the PDF, positioned with margins
@@ -944,7 +944,7 @@ export default function DisparityCalculator() {
                                         <Table>
                                             <TableHeader className="table-header-dark">
                                                 <TableRow className="hover:bg-table-header-bg/90">
-                                                    <TableHead className="sticky left-0 bg-table-header z-10">Category</TableHead>{/* Sticky header */}
+                                                    <TableHead className="sticky left-0 bg-table-header-bg z-10">Category</TableHead>{/* Sticky header */}
                                                     {reportResults.contingencySummary.map(g => g.name).sort().map(name => (
                                                         <TableHead key={name} className="text-right">{name}</TableHead>
                                                     ))}
