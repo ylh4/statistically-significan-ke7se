@@ -404,9 +404,8 @@ export default function DisparityCalculator() {
 
         // Calculate the ratio to fit the image width within the available width
         const widthRatio = availableWidth / imgWidth;
-         const heightRatio = availableHeight / imgHeight; // Consider height ratio as well
-
-         // Use the smaller ratio to ensure the entire image fits without distortion
+         // Use the image height divided by available height for scaling if it's more constrained
+         const heightRatio = availableHeight / imgHeight;
          const ratio = Math.min(widthRatio, heightRatio);
 
 
@@ -921,7 +920,7 @@ export default function DisparityCalculator() {
                                         <Table>
                                             <TableHeader className="table-header-dark">
                                                 <TableRow className="hover:bg-table-header-bg/90">
-                                                    <TableHead className="sticky left-0 bg-table-header z-10">Category</TableHead> {/* Sticky header */}
+                                                    <TableHead className="sticky left-0 bg-table-header z-10">Category</TableHead>{/* Sticky header */}
                                                     {reportResults.contingencySummary.map(g => g.name).sort().map(name => (
                                                         <TableHead key={name} className="text-right">{name}</TableHead>
                                                     ))}
@@ -930,7 +929,7 @@ export default function DisparityCalculator() {
                                             <TableBody>
                                                 {reportResults.contingencySummary.map(g => g.name).sort().map((rowName) => (
                                                     <TableRow key={rowName} className="table-row-alt hover:bg-muted/50">
-                                                        <TableCell className="font-medium sticky left-0 bg-background z-10">{rowName}</TableCell> {/* Sticky cell */}
+                                                        <TableCell className="font-medium sticky left-0 bg-background z-10">{rowName}</TableCell>{/* Sticky cell */}
                                                         {reportResults.contingencySummary.map(g => g.name).sort().map((colName) => {
                                                             const pValue = reportResults.pairwiseResultsMatrix?.[rowName]?.[colName];
                                                             const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / Math.max(1, reportResults.overallStats?.numComparisons ?? 1);
@@ -946,7 +945,7 @@ export default function DisparityCalculator() {
                                                                         isDiagonal ? 'bg-muted/30' : 'table-cell-tint', // Style diagonal differently
                                                                     )}
                                                                 >
-                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)} {/* Show dash for diagonal */}
+                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)}{/* Show dash for diagonal */}
                                                                     {/* Interpretation could be added via tooltip if needed */}
                                                                 </TableCell>
                                                             );
@@ -1003,7 +1002,7 @@ export default function DisparityCalculator() {
                                                                                        {formatScientific(pValue, 3)}
                                                                                    </TableCell>
                                                                                     <TableCell className="text-right pr-0 py-1">
-                                                                                        {renderInterpretation(pValue, correctedAlpha, true)} {/* Pass true for Bonferroni context */}
+                                                                                        {renderInterpretation(pValue, correctedAlpha, true)}{/* Pass true for Bonferroni context */}
                                                                                     </TableCell>
                                                                                </TableRow>
                                                                           );
@@ -1035,3 +1034,5 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
+
+    
