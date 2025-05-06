@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { FormEvent } from 'react';
@@ -10,15 +11,15 @@ import html2canvas from 'html2canvas';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox"; // Import Checkbox
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"; // Added TableFooter
+// import { Checkbox } from "@/components/ui/checkbox"; // No longer needed
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, FileDown, FileText, Info, ArrowLeft } from 'lucide-react'; // Added ArrowLeft
+import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, FileDown, FileText, Info } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ScrollArea } from "@/components/ui/scroll-area"; // Import ScrollArea for checkbox list
-import Link from 'next/link'; // Import Link
+// import { ScrollArea } from "@/components/ui/scroll-area"; // No longer needed for checkbox list
+import Link from 'next/link';
 
 
 import {
@@ -28,12 +29,12 @@ import {
     type ContingencySummaryData,
     type OverallTestStats,
     type PairwiseResultsMatrix,
-    type ContributionDetail, // Import ContributionDetail type
+    type ContributionDetail,
     formatScientific,
     formatDecimal,
     formatPercent
 } from "@/lib/calculations";
-import { exportToCSV, type ExportFormValues } from '@/lib/utils'; // Corrected import type name
+import { exportToCSV, type ExportFormValues } from '@/lib/utils';
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -55,26 +56,14 @@ const formSchema = z.object({
   alpha: z.coerce
     .number({ invalid_type_error: "Significance Level must be a number" })
     .positive("Significance Level must be positive")
-    .lte(1, "Significance Level must be less than or equal to 1") // Allow 1
-    .refine(val => val > 0, { message: "Significance Level must be greater than 0" }) // Separate check for > 0
+    .lte(1, "Significance Level must be less than or equal to 1")
+    .refine(val => val > 0, { message: "Significance Level must be greater than 0" })
     .default(0.05),
   groups: z.array(groupSchema).min(2, "At least two categories are required"),
-  referenceCategories: z.array(z.string()).min(1, "At least one reference category must be selected"), // Add reference categories field
-}).refine(data => {
-    // Ensure selected reference categories still exist in the groups
-    if (data.groups.length < 2 && data.referenceCategories.length > 0) {
-        // Allow valid state if groups become less than 2 but refs were valid before
-        return true;
-    }
-    const groupNames = data.groups.map(g => g.name);
-    return data.referenceCategories.every(refCat => groupNames.includes(refCat));
-  }, {
-    message: "One or more selected reference categories no longer exist in the groups list.",
-    path: ["referenceCategories"], // Path to show error
+  // referenceCategories: z.array(z.string()).min(1, "At least one reference category must be selected"), // Removed
 });
+// Removed .refine for referenceCategories
 
-
-// Explicitly define FormValues based on the schema
 type FormValues = z.infer<typeof formSchema>;
 
 
@@ -86,7 +75,6 @@ export default function DisparityCalculator() {
   const reportRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<string>("input");
 
-  // Start with empty default groups
   const defaultGroups: GroupInput[] = [];
 
    const form = useForm<FormValues>({
@@ -94,10 +82,9 @@ export default function DisparityCalculator() {
     defaultValues: {
       alpha: 0.05,
       groups: defaultGroups,
-      // Start with empty reference categories as well
-      referenceCategories: [],
+      // referenceCategories: [], // Removed
     },
-     mode: "onChange", // Validate on change
+     mode: "onChange",
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -105,141 +92,70 @@ export default function DisparityCalculator() {
     name: "groups",
   });
 
-    // Watch group names to update checkbox options dynamically
   const groupFields = form.watch('groups');
   const groupNames = useMemo(() => groupFields.map(g => g.name).filter(name => name.trim() !== ''), [groupFields]);
 
-  // Handler for Alpha input change
+
   const handleAlphaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value;
       let numValue: number | null = parseFloat(value);
 
-       // Enforce range limits directly for better UX than just validation message
         if (!isNaN(numValue)) {
-             // Clamp the value between a very small positive number and 1
              numValue = Math.max(0.00000001, Math.min(numValue, 1));
             form.setValue('alpha', numValue, { shouldValidate: true });
         } else if (value === '') {
-            // Allow temporary empty state, validation will catch it if submitted
-             form.setValue('alpha', null as any, { shouldValidate: true }); // Use null for empty
+             form.setValue('alpha', null as any, { shouldValidate: true });
         } else {
-            // If input is not a number (e.g., "abc"), keep it in input but mark as invalid
              form.setValue('alpha', value as any, { shouldValidate: true });
         }
 
-
-      // Trigger calculation when alpha changes if results exist AND form is valid
        form.trigger('alpha').then(isValid => {
             if (isValid && reportResults) {
-                // Recalculate using current valid form data
                  const currentData = form.getValues();
-                 // Need to handle potential null in alpha if user cleared it
-                 const alphaValue = currentData.alpha === null ? 0.05 : currentData.alpha; // Default or handle as needed
-                 // Ensure groups and referenceCategories are also valid before recalculating
-                 if (currentData.groups.length >= 2 && currentData.referenceCategories.length > 0) {
-                     onSubmit({...currentData, alpha: alphaValue } as FormValues); // Force recalculation
+                 const alphaValue = currentData.alpha === null ? 0.05 : currentData.alpha;
+                 if (currentData.groups.length >= 2) { // Check only for groups
+                     onSubmit({...currentData, alpha: alphaValue } as FormValues);
                  } else {
-                     // Clear results if other parts are invalid now
                      setReportResults(null);
-                      setCalculationError("Recalculation skipped: Group or Reference Category requirements not met.");
+                      setCalculationError("Recalculation skipped: Group requirements not met.");
                  }
             } else if (!reportResults) {
-                // Only clear errors if results don't exist yet
                 setCalculationError(null);
             } else {
-                // If alpha is now invalid, show validation message but don't clear results yet
                  setCalculationError(form.formState.errors.alpha?.message || null);
             }
        });
   };
 
-
-   // Effect to update reference categories if group names change or groups are removed
   useEffect(() => {
-    const currentReferences = form.getValues('referenceCategories') || [];
-    const currentGroupNames = form.getValues('groups').map(g => g.name).filter(Boolean); // Get current names
-    const validReferences = currentReferences.filter(ref => currentGroupNames.includes(ref));
-
-    // Only update if the valid list differs from the current list
-    if (JSON.stringify(validReferences) !== JSON.stringify(currentReferences)) {
-         form.setValue('referenceCategories', validReferences, { shouldValidate: true });
-    }
-
-     // Auto-select the first group ONLY if no references are selected AND there's at least one group
-     if (validReferences.length === 0 && currentGroupNames.length > 0) {
-         form.setValue('referenceCategories', [currentGroupNames[0]], { shouldValidate: true });
-     }
-
-
-    // Trigger validation for referenceCategories when group names change
-    form.trigger('referenceCategories');
-
-    // Conditionally clear report if major changes occur (like group removal/rename)
-    // Note: Adding a group doesn't automatically clear, user needs to regenerate
-    // Consider clearing results more aggressively if needed.
-     const previousGroupNames = JSON.stringify(form.formState.defaultValues?.groups?.map(g => g?.name) || []);
-     const currentGroupNamesString = JSON.stringify(currentGroupNames);
-     if (previousGroupNames !== currentGroupNamesString && fields.length < (form.formState.defaultValues?.groups?.length || 0)) {
-        // Simple check: if number of fields decreased, likely a removal, clear results
-         // setReportResults(null);
-         // setCalculationError(null);
-     }
-
-  }, [groupNames, form, fields.length]); // Depend on groupNames derived from watched fields and fields length
+    // Auto-generate a unique name if possible when a new group is added and name is empty
+    fields.forEach((field, index) => {
+      if (!field.name || field.name.trim() === "") {
+        let newName = `Group ${index + 1}`;
+        let suffix = 1;
+        const existingNames = form.getValues('groups').map(g => g.name).filter(Boolean);
+        while (existingNames.includes(newName)) {
+          newName = `Group ${index + 1}-${suffix++}`;
+        }
+        form.setValue(`groups.${index}.name`, newName, { shouldValidate: false }); // Don't validate immediately
+      }
+    });
+  }, [fields, form]);
 
 
-  // Main calculation submission handler
   const onSubmit = (data: FormValues) => {
     setCalculationError(null);
-    setReportResults(null); // Clear previous results
-
-    // Ensure selected references are still valid (double-check)
-     const currentGroupNames = data.groups.map(g => g.name);
-     const validSelectedReferences = data.referenceCategories.filter(ref => currentGroupNames.includes(ref));
-
-     // Check if selection is empty ONLY IF there are groups to select from
-     if (currentGroupNames.length > 0 && validSelectedReferences.length === 0) {
-          const errorMsg = "At least one reference category must be selected.";
-          setCalculationError(errorMsg);
-          toast({
-              title: "Input Error",
-              description: errorMsg,
-              variant: "destructive",
-          });
-          setActiveTab("input"); // Stay on input tab
-          // Attempt to select the first group if none are selected
-          if (currentGroupNames.length > 0) {
-            form.setValue('referenceCategories', [currentGroupNames[0]], { shouldValidate: true });
-          }
-          return; // Stop submission
-     }
-     // Check if previously selected references are now invalid
-     else if (validSelectedReferences.length !== data.referenceCategories.length) {
-         const errorMsg = "One or more selected reference categories are no longer valid due to group changes. Please review your selection.";
-         setCalculationError(errorMsg);
-          toast({
-                title: "Input Error",
-                description: errorMsg,
-                variant: "destructive",
-           });
-         setActiveTab("input"); // Stay on input tab
-         // Update the form state to only the valid ones
-         form.setValue('referenceCategories', validSelectedReferences, { shouldValidate: true });
-         return; // Stop submission
-     }
-
+    setReportResults(null);
 
     try {
-      // Use the calculation function
       const results = performMultiComparisonReport({
-        alpha: data.alpha ?? 0.05, // Handle null alpha from input
+        alpha: data.alpha ?? 0.05,
         groups: data.groups,
       });
 
-      setReportResults(results); // Store the entire results object
+      setReportResults(results);
 
         if (results.errors && results.errors.length > 0) {
-             // Filter out warnings about expected counts < 5 for the main error state
             const criticalErrors = results.errors.filter(e => !e.toLowerCase().includes('warning:'));
             const warningErrors = results.errors.filter(e => e.toLowerCase().includes('warning:'));
 
@@ -252,21 +168,19 @@ export default function DisparityCalculator() {
                      variant: "destructive",
                      duration: 10000,
                  });
-                 setActiveTab("input"); // Stay on input tab on critical failure
+                 setActiveTab("input");
              } else if (warningErrors.length > 0) {
                  const warningMsg = warningErrors.join('; ');
-                 // Set a non-blocking error state for warnings
-                  setCalculationError(`${warningMsg}`); // Display warnings without "Error:" prefix
+                  setCalculationError(`${warningMsg}`);
                   toast({
                       title: "Calculation Warning",
                       description: warningMsg,
-                      variant: "default", // Use default variant for warnings
-                      className: "border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400", // Apply warning style
-                      duration: 7000, // Shorter duration for warnings
+                      variant: "default",
+                      className: "border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400",
+                      duration: 7000,
                   });
-                  setActiveTab("report"); // Still go to report tab for warnings
+                  setActiveTab("report");
              } else {
-                 // Should not happen if results.errors is not empty, but handle defensively
                  toast({
                      title: "Calculation Successful",
                      description: "Statistical report has been generated.",
@@ -282,7 +196,6 @@ export default function DisparityCalculator() {
              setActiveTab("report");
         }
 
-
     } catch (error: any) {
       console.error("Calculation failed:", error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during calculation.";
@@ -292,17 +205,14 @@ export default function DisparityCalculator() {
             description: errorMessage,
             variant: "destructive",
        });
-        setActiveTab("input"); // Stay on input tab on critical failure
+        setActiveTab("input");
     }
   };
 
-  // Reset form and results
   const handleReset = () => {
-    // Reset form to its default values including the default reference category
      form.reset({
         alpha: 0.05,
-        groups: defaultGroups, // Reset to empty array
-        referenceCategories: [], // Reset to empty array
+        groups: defaultGroups,
      });
     setReportResults(null);
     setCalculationError(null);
@@ -313,7 +223,6 @@ export default function DisparityCalculator() {
       setActiveTab("input");
   };
 
- // Handle CSV Export
  const handleExport = () => {
      if (!reportResults || (!reportResults.contingencySummary && !reportResults.overallStats && !reportResults.pairwiseResultsMatrix)) {
           toast({
@@ -324,7 +233,6 @@ export default function DisparityCalculator() {
          return;
      }
    try {
-       // Pass reportResults and the current form values (including reference selection)
        exportToCSV(reportResults, form.getValues() as ExportFormValues, `statistical-report_${Date.now()}.csv`);
         toast({
            title: "Export Successful",
@@ -341,7 +249,6 @@ export default function DisparityCalculator() {
  };
 
 
- // Handle PDF Export
  const handleExportPDF = async () => {
      const reportElement = reportRef.current;
      if (!reportElement) {
@@ -361,14 +268,11 @@ export default function DisparityCalculator() {
           return;
       }
 
-      // Ensure the report tab is active before capturing
       if (activeTab !== 'report') {
           setActiveTab('report');
-          // Wait a short moment for the tab content to render
           await new Promise(resolve => setTimeout(resolve, 200));
       }
 
-      // Re-select the element after potential tab switch and re-render
       const currentReportElement = reportRef.current;
        if (!currentReportElement) {
           toast({
@@ -379,32 +283,30 @@ export default function DisparityCalculator() {
          return;
      }
 
-
       toast({
           title: "Generating PDF...",
           description: "Please wait while the report is being generated.",
       });
 
    try {
-        // Capture the specific report content area
         const canvas = await html2canvas(currentReportElement, {
-             scale: 2, // Increase scale for better resolution
-             useCORS: true, // If using external images/fonts
-             logging: false, // Disable html2canvas logging in production
-             backgroundColor: '#ffffff', // Set explicit background
-              scrollX: 0, // Ensure capture starts from the left edge
-              scrollY: 0, // Ensure capture starts from the top edge
-              windowWidth: currentReportElement.scrollWidth, // Capture full width
-              windowHeight: currentReportElement.scrollHeight, // Capture full height
+             scale: 2,
+             useCORS: true,
+             logging: false,
+             backgroundColor: '#ffffff',
+              scrollX: 0,
+              scrollY: 0,
+              windowWidth: currentReportElement.scrollWidth,
+              windowHeight: currentReportElement.scrollHeight,
         });
 
        const imgData = canvas.toDataURL('image/png');
        const pdf = new jsPDF({
-           orientation: 'p', // portrait
-           unit: 'pt', // points
-           format: 'a4', // page format
+           orientation: 'p',
+           unit: 'pt',
+           format: 'a4',
            putOnlyUsedFonts:true,
-           floatPrecision: 16 // or "smart", default is 16
+           floatPrecision: 16
        });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -412,28 +314,20 @@ export default function DisparityCalculator() {
         const imgWidth = canvas.width;
         const imgHeight = canvas.height;
 
-        // Calculate margins (e.g., 40 points)
         const margin = 40;
         const availableWidth = pdfWidth - margin * 2;
         const availableHeight = pdfHeight - margin * 2;
 
-        // Calculate the ratio to fit the image within the available width/height
         const widthRatio = availableWidth / imgWidth;
         const heightRatio = availableHeight / imgHeight;
         const ratio = Math.min(widthRatio, heightRatio);
 
-
-        // Calculate the dimensions and position of the image on the PDF
         const effectiveImgWidth = imgWidth * ratio;
         const effectiveImgHeight = imgHeight * ratio;
-         // Center the image horizontally and position near top with margin
          const imgX = margin + (availableWidth - effectiveImgWidth) / 2;
-         const imgY = margin; // Place near top margin
+         const imgY = margin;
 
-
-       // Add the image to the PDF, positioned with margins
        pdf.addImage(imgData, 'PNG', imgX, imgY, effectiveImgWidth, effectiveImgHeight);
-
        const filename = `statistical-report_${Date.now()}.pdf`;
        pdf.save(filename);
 
@@ -452,16 +346,12 @@ export default function DisparityCalculator() {
    }
  };
 
- // Get selected reference categories from form state
- const selectedReferenceCategories = form.watch('referenceCategories') || [];
- const currentAlpha = form.watch('alpha'); // Watch alpha for interpretations
+ const currentAlpha = form.watch('alpha');
 
-
- // Helper to render the interpretation text with icon
   const renderInterpretation = (
     p: number | null | undefined,
     alpha: number,
-    isBonferroni: boolean = false // Flag for Bonferroni interpretation
+    isBonferroni: boolean = false
   ) => {
     if (p === null || p === undefined || isNaN(p)) return <span className="text-xs italic text-muted-foreground">N/A</span>;
 
@@ -470,18 +360,15 @@ export default function DisparityCalculator() {
         ? "Statistically different."
         : "Not statistically different.";
 
-    // Standard follow-up, potentially adjust based on context if needed
     const followUpText = isSignificant
         ? " Potential disparity; pursue further investigation."
         : "";
 
     const fullText = interpretationText + followUpText;
 
-
     return (
          <span className={cn("ml-2 text-xs italic", isSignificant ? "text-destructive font-semibold" : "text-muted-foreground")}>
               {fullText}
-              {/* Optional: Add icon or specific marker */}
          </span>
      );
  };
@@ -494,7 +381,6 @@ export default function DisparityCalculator() {
              <TabsTrigger value="report" disabled={!reportResults}>Statistical Report</TabsTrigger>
          </TabsList>
 
-         {/* Input Tab */}
          <TabsContent value="input">
              <Card className="w-full max-w-5xl mx-auto shadow-lg mt-4">
                  <CardHeader>
@@ -509,19 +395,18 @@ export default function DisparityCalculator() {
                  </CardHeader>
                  <CardContent>
                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                         {/* Alpha Input */}
                          <div className="space-y-2 max-w-xs">
                              <Label htmlFor="alpha">Significance Level (α)</Label>
                              <div className="flex items-center gap-2">
                                  <Input
                                      id="alpha"
                                      type="number"
-                                     step="any" // Use 'any' for floating point
-                                     min="0.00000001" // Smallest positive value (approx)
+                                     step="any"
+                                     min="0.00000001"
                                      max="1"
-                                      value={form.watch('alpha') ?? ''} // Ensure input reflects form state including null/empty string and clamped values
-                                     onChange={handleAlphaChange} // Use custom handler
-                                     onBlur={() => form.trigger('alpha')} // Validate on blur as well
+                                      value={form.watch('alpha') ?? ''}
+                                     onChange={handleAlphaChange}
+                                     onBlur={() => form.trigger('alpha')}
                                      className={cn("border", form.formState.errors.alpha ? "border-destructive" : "border-input")}
                                      placeholder="e.g., 0.05"
                                  />
@@ -542,7 +427,6 @@ export default function DisparityCalculator() {
                              {form.formState.errors.alpha && <p className="text-sm text-destructive">{form.formState.errors.alpha.message}</p>}
                          </div>
 
-                         {/* Categories/Groups Section */}
                          <div className="space-y-4">
                              <Label className="text-lg font-medium text-secondary-foreground">Categories (Groups)</Label>
                              {fields.length === 0 && (
@@ -553,7 +437,6 @@ export default function DisparityCalculator() {
                              {fields.map((field, index) => (
                                  <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card">
                                      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
-                                         {/* Name */}
                                          <div className="space-y-1">
                                              <Label htmlFor={`groups.${index}.name`}>Name</Label>
                                              <Input
@@ -561,17 +444,12 @@ export default function DisparityCalculator() {
                                                  {...form.register(`groups.${index}.name`)}
                                                  className={cn("border", form.formState.errors.groups?.[index]?.name ? "border-destructive" : "border-input")}
                                                   onChange={(e) => {
-                                                     // Update the specific field value
                                                      form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
-                                                     // Clear results if name changes as it affects reference selection
-                                                     // setReportResults(null);
-                                                     // setCalculationError(null);
                                                   }}
-                                                  onBlur={() => form.trigger(`groups.${index}.name`)} // Validate on blur
+                                                  onBlur={() => form.trigger(`groups.${index}.name`)}
                                              />
                                              {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
                                          </div>
-                                         {/* Experienced Count */}
                                          <div className="space-y-1">
                                              <Label htmlFor={`groups.${index}.experienced`}># Experienced Outcome</Label>
                                              <Input
@@ -579,19 +457,15 @@ export default function DisparityCalculator() {
                                                  type="number"
                                                  min="0"
                                                  step="1"
-                                                  {...form.register(`groups.${index}.experienced`)} // Use register directly
+                                                  {...form.register(`groups.${index}.experienced`)}
                                                   className={cn("border", form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input")}
-                                                  onChange={(e) => { // Keep onChange to allow potential clearing/recalc logic if desired
+                                                  onChange={(e) => {
                                                       form.setValue(`groups.${index}.experienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
-                                                      // Optional: Clear results on count change
-                                                      // setReportResults(null);
-                                                      // setCalculationError(null);
                                                   }}
-                                                  onBlur={() => form.trigger(`groups.${index}.experienced`)} // Validate on blur
+                                                  onBlur={() => form.trigger(`groups.${index}.experienced`)}
                                              />
                                              {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
                                          </div>
-                                         {/* Not Experienced Count */}
                                          <div className="space-y-1">
                                              <Label htmlFor={`groups.${index}.notExperienced`}># Did Not Experience</Label>
                                              <Input
@@ -599,15 +473,12 @@ export default function DisparityCalculator() {
                                                  type="number"
                                                  min="0"
                                                  step="1"
-                                                  {...form.register(`groups.${index}.notExperienced`)} // Use register directly
+                                                  {...form.register(`groups.${index}.notExperienced`)}
                                                   className={cn("border", form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "border-input")}
-                                                   onChange={(e) => { // Keep onChange to allow potential clearing/recalc logic if desired
+                                                   onChange={(e) => {
                                                        form.setValue(`groups.${index}.notExperienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
-                                                       // Optional: Clear results on count change
-                                                       // setReportResults(null);
-                                                       // setCalculationError(null);
                                                    }}
-                                                   onBlur={() => form.trigger(`groups.${index}.notExperienced`)} // Validate on blur
+                                                   onBlur={() => form.trigger(`groups.${index}.notExperienced`)}
                                              />
                                              {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
                                          </div>
@@ -618,11 +489,9 @@ export default function DisparityCalculator() {
                                          size="icon"
                                          onClick={() => {
                                              remove(index);
-                                              // Clear results and errors when a group is removed
                                               setReportResults(null);
                                               setCalculationError(null);
                                           }}
-                                         // Only disable remove if 0 groups exist (let validation handle min 2)
                                           disabled={fields.length <= 0}
                                          className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
                                          aria-label="Remove category"
@@ -635,7 +504,6 @@ export default function DisparityCalculator() {
                                  type="button"
                                  variant="outline"
                                  onClick={() => {
-                                      // Auto-generate a unique name if possible
                                       const existingNames = groupNames;
                                       let newName = `Group ${fields.length + 1}`;
                                       let suffix = 1;
@@ -643,91 +511,17 @@ export default function DisparityCalculator() {
                                           newName = `Group ${fields.length + 1}-${suffix++}`;
                                       }
                                       append({ name: newName, experienced: 0, notExperienced: 0 });
-                                      // Do not clear results on adding a group, let user regenerate
-                                      // setReportResults(null);
-                                      // setCalculationError(null);
                                   }}
                                  className="mt-2"
                              >
                                  <PlusCircle className="mr-2 h-4 w-4" /> Add Category
                              </Button>
-                             {/* Display root error for minimum number of groups */}
                              {form.formState.errors.groups?.root && <p className="text-sm text-destructive mt-2">{form.formState.errors.groups.root.message}</p>}
-                             {/* Display general array error (e.g., from refine) */}
                              {form.formState.errors.groups && typeof form.formState.errors.groups.message === 'string' && !form.formState.errors.groups.root && <p className="text-sm text-destructive mt-2">{form.formState.errors.groups.message}</p>}
                          </div>
 
+                         {/* Removed Reference Category Selection Section */}
 
-                         {/* Reference Category Selection */}
-                         <div className="space-y-2">
-                             <Label className="text-lg font-medium text-secondary-foreground">Select Reference Category(ies)</Label>
-                              <ScrollArea className="h-40 w-full rounded-md border p-4"> {/* Added ScrollArea */}
-                                 <Controller
-                                     control={form.control}
-                                     name="referenceCategories"
-                                     render={({ field }) => (
-                                         <div className="space-y-2">
-                                             {groupNames.length > 0 ? groupNames.map((name) => (
-                                                 <div key={name} className="flex items-center space-x-2">
-                                                     <Checkbox
-                                                         id={`ref-${name}`}
-                                                         checked={field.value?.includes(name)}
-                                                         disabled={groupNames.length < 2} // Disable if less than 2 groups
-                                                         onCheckedChange={(checked) => {
-                                                             const currentValues = field.value || [];
-                                                             let newValues;
-                                                             if (checked) {
-                                                                  newValues = [...currentValues, name];
-                                                             } else {
-                                                                  newValues = currentValues.filter(value => value !== name);
-                                                             }
-                                                             // Check if unchecking would leave none selected AND there are groups to select from
-                                                             if (newValues.length === 0 && groupNames.length > 0 && !checked) {
-                                                                toast({
-                                                                    title: "Selection Required",
-                                                                    description: "At least one reference category must be selected.",
-                                                                    variant: "destructive",
-                                                                    duration: 3000,
-                                                                });
-                                                                 // Don't update field.onChange if validation fails
-                                                             } else {
-                                                                  field.onChange(newValues);
-                                                                  // Trigger validation explicitly for the field
-                                                                   form.trigger('referenceCategories');
-                                                                  // Optional: Recalculate if results exist and form is otherwise valid
-                                                                   // const otherFieldsValid = Object.keys(form.formState.errors).length === 0 || (Object.keys(form.formState.errors).length === 1 && form.formState.errors.referenceCategories);
-                                                                   // if (reportResults && otherFieldsValid) {
-                                                                   //      const currentData = form.getValues();
-                                                                   //      onSubmit({...currentData, referenceCategories: newValues});
-                                                                   // } else {
-                                                                   //      setCalculationError(null);
-                                                                   // }
-                                                             }
-                                                         }}
-                                                     />
-                                                     <Label
-                                                         htmlFor={`ref-${name}`}
-                                                         className={cn(
-                                                             "font-normal cursor-pointer",
-                                                             groupNames.length < 2 ? "text-muted-foreground cursor-not-allowed" : ""
-                                                         )}
-                                                     >
-                                                         {name}
-                                                     </Label>
-                                                 </div>
-                                             )) : (
-                                                 <p className="text-sm text-muted-foreground">Add at least two categories to select references.</p>
-                                             )}
-                                         </div>
-                                     )}
-                                 />
-                               </ScrollArea>
-                             {/* Display error specifically for referenceCategories */}
-                             {form.formState.errors.referenceCategories && <p className="text-sm text-destructive mt-2">{form.formState.errors.referenceCategories.message}</p>}
-                         </div>
-
-
-                         {/* Action Buttons */}
                          <div className="flex flex-col sm:flex-row justify-end gap-4 pt-4">
                              <Button type="button" variant="outline" onClick={handleReset}>
                                  <RotateCcw className="mr-2 h-4 w-4" /> Reset Form
@@ -741,10 +535,9 @@ export default function DisparityCalculator() {
              </Card>
          </TabsContent>
 
-         {/* Report Tab */}
          <TabsContent value="report">
-             <div ref={reportRef} className="bg-white p-4 rounded-md shadow"> {/* This div will be captured for PDF */}
-                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none"> {/* Removed border */}
+             <div ref={reportRef} className="bg-white p-4 rounded-md shadow">
+                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none">
                       <CardHeader className="flex flex-row justify-between items-center pb-2">
                           <CardTitle className="text-2xl text-secondary-foreground">Statistical Report</CardTitle>
                           <div className="flex gap-2">
@@ -770,7 +563,6 @@ export default function DisparityCalculator() {
                       </CardHeader>
 
                      <CardContent className="space-y-6 pt-4">
-                         {/* Display calculation errors/warnings */}
                           {calculationError && (
                              <Alert variant={calculationError.toLowerCase().includes('warning') ? "default" : "destructive"} className={cn("w-full mb-4", calculationError.toLowerCase().includes('warning') ? "border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400" : "")}>
                                  <AlertCircle className="h-4 w-4" />
@@ -779,34 +571,30 @@ export default function DisparityCalculator() {
                              </Alert>
                           )}
 
-
-                        {/* Display Input Parameters in Report */}
                         {reportResults && form.formState.isValid && (
                              <div className="space-y-2 p-4 border rounded-md bg-card mb-6">
                                 <h3 className="text-md font-semibold text-secondary-foreground border-b pb-1 mb-2">Report Parameters</h3>
                                 <div className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                                      <div><strong>Significance Level (α):</strong> {formatDecimal(form.getValues('alpha'), 4)}</div>
-                                     <div><strong>Reference Categories:</strong> {selectedReferenceCategories.join(', ') || 'N/A'}</div>
+                                     {/* <div><strong>Reference Categories:</strong> {selectedReferenceCategories.join(', ') || 'N/A'}</div> // Removed */}
                                 </div>
                              </div>
                         )}
 
-
-                         {/* Phase 1: Contingency Table Summary */}
                           {reportResults?.contingencySummary && reportResults.contingencySummary.length > 0 && reportResults.totals && (
                              <div className="space-y-2">
                                  <h3 className="text-lg font-semibold text-secondary-foreground mb-2">Contingency Table Summary</h3>
                                  <div className="overflow-x-auto rounded-md border">
                                      <Table>
                                          <TableHeader className="table-header-dark">
-                                             <TableRow className="hover:bg-table-header-bg/90">
+                                             <TableRow>
                                                   <TableHead rowSpan={2} className="align-bottom pb-2">Category (Race)</TableHead>
                                                   <TableHead colSpan={3} className="text-center border-l border-r">Observed (Actual)</TableHead>
                                                   <TableHead rowSpan={2} className="text-center border-r align-bottom pb-2">% Experienced</TableHead>
                                                   <TableHead colSpan={2} className="text-center border-r">Expected</TableHead>
                                                   <TableHead rowSpan={2} className="text-center align-bottom pb-2">Chi-Sq Contribution</TableHead>
                                              </TableRow>
-                                              <TableRow className="hover:bg-table-header-bg/90">
+                                              <TableRow>
                                                    <TableHead className="text-right border-l"># Did NOT Experience</TableHead>
                                                    <TableHead className="text-right"># Experienced</TableHead>
                                                    <TableHead className="text-right border-r">Row Subtotal</TableHead>
@@ -847,7 +635,6 @@ export default function DisparityCalculator() {
                              </div>
                          )}
 
-                         {/* Phase 2: Overall Tests Results Box */}
                          {reportResults?.overallStats && (
                              <div className="space-y-4 p-4 border rounded-md bg-card">
                                   <h3 className="text-lg font-semibold text-secondary-foreground border-b pb-2 mb-3">Overall Test Results</h3>
@@ -929,7 +716,6 @@ export default function DisparityCalculator() {
                              </div>
                          )}
 
-                            {/* Phase 3: Pairwise Comparisons Matrix */}
                            {reportResults?.pairwiseResultsMatrix && reportResults?.contingencySummary && reportResults.overallStats && reportResults.overallStats.numComparisons > 0 && reportResults.contingencySummary.length >= 2 && (
                                 <div className="space-y-4">
                                     <h3 className="text-lg font-semibold text-secondary-foreground mb-2">
@@ -943,8 +729,8 @@ export default function DisparityCalculator() {
                                     <div className="overflow-x-auto rounded-md border">
                                         <Table>
                                             <TableHeader className="table-header-dark">
-                                                <TableRow className="hover:bg-table-header-bg/90">
-                                                    <TableHead className="sticky left-0 bg-table-header-bg z-10">Category</TableHead>{/* Sticky header */}
+                                                <TableRow>
+                                                    <TableHead className="sticky left-0 bg-table-header-bg z-10">Category</TableHead>
                                                     {reportResults.contingencySummary.map(g => g.name).sort().map(name => (
                                                         <TableHead key={name} className="text-right">{name}</TableHead>
                                                     ))}
@@ -953,7 +739,7 @@ export default function DisparityCalculator() {
                                             <TableBody>
                                                 {reportResults.contingencySummary.map(g => g.name).sort().map((rowName) => (
                                                     <TableRow key={rowName} className="table-row-alt hover:bg-muted/50">
-                                                        <TableCell className="font-medium sticky left-0 bg-background z-10">{rowName}</TableCell>{/* Sticky cell */}
+                                                        <TableCell className="font-medium sticky left-0 bg-background z-10">{rowName}</TableCell>
                                                         {reportResults.contingencySummary.map(g => g.name).sort().map((colName) => {
                                                             const pValue = reportResults.pairwiseResultsMatrix?.[rowName]?.[colName];
                                                             const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / Math.max(1, reportResults.overallStats?.numComparisons ?? 1);
@@ -966,11 +752,10 @@ export default function DisparityCalculator() {
                                                                     className={cn(
                                                                         "text-right py-2 px-4",
                                                                         isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground',
-                                                                        isDiagonal ? 'bg-muted/30' : 'table-cell-tint', // Style diagonal differently
+                                                                        isDiagonal ? 'bg-muted/30' : 'table-cell-tint',
                                                                     )}
                                                                 >
-                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)}{/* Show dash for diagonal */}
-                                                                    {/* Interpretation could be added via tooltip if needed */}
+                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)}
                                                                 </TableCell>
                                                             );
                                                         })}
@@ -979,77 +764,19 @@ export default function DisparityCalculator() {
                                             </TableBody>
                                         </Table>
                                     </div>
-                                     {/* Add interpretation notes based on significance */}
                                       <p className="text-xs text-muted-foreground italic mt-2">
                                         <span className="text-destructive font-semibold">Red bold text</span> indicates the pairwise difference is statistically significant (p &lt; α_bonf). Potential disparity between these two groups. Pursue further investigation.
                                       </p>
                                 </div>
                            )}
 
-
-                         {/* Section for Comparison to Reference Categories */}
-                          {reportResults?.contingencySummary && reportResults.contingencySummary.length >= 2 && selectedReferenceCategories.length > 0 && reportResults.overallStats && reportResults.overallStats.numComparisons > 0 && (
-                             <div className="space-y-4">
-                                 <h3 className="text-lg font-semibold text-secondary-foreground mb-2">Comparison to Reference Categories</h3>
-                                 {selectedReferenceCategories
-                                      .filter(refName => reportResults.contingencySummary.some(g => g.name === refName)) // Filter out refs no longer in groups
-                                      .sort() // Sort reference categories for consistent display order
-                                      .map(referenceCategory => {
-                                         const referenceGroup = reportResults.contingencySummary.find(g => g.name === referenceCategory);
-                                         const otherGroups = reportResults.contingencySummary.filter(g => g.name !== referenceCategory);
-                                         const correctedAlpha = (reportResults.overallStats?.limitAlpha ?? 0.05) / Math.max(1, reportResults.overallStats?.numComparisons ?? 1);
-
-                                         if (!referenceGroup) return null; // Should not happen due to filter, but safe check
-
-                                         return (
-                                             <div key={referenceCategory} className="p-4 border rounded-md bg-card mb-4">
-                                                 <h4 className="text-md font-semibold text-secondary-foreground border-b pb-1 mb-3">Reference: {referenceCategory}</h4>
-                                                 <div className="overflow-x-auto">
-                                                      <Table>
-                                                          <TableHeader className="border-b-0">
-                                                               <TableRow className="border-b-0 hover:bg-transparent">
-                                                                   <TableHead className="pl-0 h-auto py-1">Comparison Group</TableHead>
-                                                                   <TableHead className="text-right h-auto py-1">Corrected P-Value</TableHead>
-                                                                   <TableHead className="text-right pr-0 h-auto py-1 text-wrap max-w-[200px]">Interpretation (vs α_bonf)</TableHead>
-                                                               </TableRow>
-                                                          </TableHeader>
-                                                          <TableBody>
-                                                               {otherGroups.length > 0 ? otherGroups
-                                                                     .sort((a, b) => a.name.localeCompare(b.name)) // Sort comparison groups
-                                                                     .map(comparisonGroup => {
-                                                                          const pValue = reportResults.pairwiseResultsMatrix?.[referenceCategory]?.[comparisonGroup.name];
-                                                                          const isSignificant = typeof pValue === 'number' && !isNaN(pValue) && pValue < correctedAlpha;
-
-                                                                          return (
-                                                                               <TableRow key={comparisonGroup.name} className="border-b-0 hover:bg-transparent">
-                                                                                   <TableCell className="font-medium pl-0 py-1">{comparisonGroup.name}</TableCell>
-                                                                                   <TableCell className={cn("text-right py-1", isSignificant ? 'text-destructive font-semibold' : 'text-muted-foreground')}>
-                                                                                       {formatScientific(pValue, 3)}
-                                                                                   </TableCell>
-                                                                                    <TableCell className="text-right pr-0 py-1">
-                                                                                        {renderInterpretation(pValue, correctedAlpha, true)}{/* Pass true for Bonferroni context */}
-                                                                                    </TableCell>
-                                                                               </TableRow>
-                                                                          );
-                                                               }) : (
-                                                                    <TableRow className="border-b-0 hover:bg-transparent">
-                                                                         <TableCell colSpan={3} className="text-center text-muted-foreground italic py-2">No other groups to compare.</TableCell>
-                                                                    </TableRow>
-                                                               )}
-                                                          </TableBody>
-                                                      </Table>
-                                                 </div>
-                                             </div>
-                                         );
-                                 })}
-                             </div>
-                          )}
+                         {/* Removed Comparison to Reference Categories Section */}
 
 
-                         {!reportResults && !calculationError && fields.length >= 2 && ( // Show only if enough categories exist
+                         {!reportResults && !calculationError && fields.length >= 2 && (
                              <p className="text-center text-muted-foreground italic">Generate a report to see the results here.</p>
                          )}
-                         {!reportResults && !calculationError && fields.length < 2 && ( // Message when not enough categories
+                         {!reportResults && !calculationError && fields.length < 2 && (
                              <p className="text-center text-muted-foreground italic">Add at least two categories and generate a report to see results.</p>
                          )}
                      </CardContent>
@@ -1059,3 +786,5 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
+
+    
