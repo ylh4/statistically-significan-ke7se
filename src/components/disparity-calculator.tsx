@@ -12,21 +12,19 @@ import html2canvas from 'html2canvas';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-// import { Checkbox } from "@/components/ui/checkbox"; // No longer needed
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Trash2, PlusCircle, Download, RotateCcw, AlertCircle, FileDown, FileText, Info } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-// import { ScrollArea } from "@/components/ui/scroll-area"; // No longer needed for checkbox list
 import Link from 'next/link';
 
 
 import {
     performMultiComparisonReport,
     type MultiComparisonResults,
-    type GroupInput,
+    type GroupInput, // This remains { name, experienced, notExperienced }
     type ContingencySummaryData,
     type OverallTestStats,
     type PairwiseResultsMatrix,
@@ -35,7 +33,7 @@ import {
     formatDecimal,
     formatPercent
 } from "@/lib/calculations";
-import { exportToCSV, type ExportFormValues } from '@/lib/utils';
+import { exportToCSV, type ExportFormValues } from '@/lib/utils'; // ExportFormValues will be {name, experienced, total}
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -47,11 +45,15 @@ const groupSchema = z.object({
     .number({ invalid_type_error: "Experienced count must be a number" })
     .int("Experienced count must be an integer")
     .nonnegative("Experienced count cannot be negative"),
-  notExperienced: z.coerce
-    .number({ invalid_type_error: "Not Experienced count must be a number" })
-    .int("Not Experienced count must be an integer")
-    .nonnegative("Not Experienced count cannot be negative"),
+  total: z.coerce
+    .number({ invalid_type_error: "Total count must be a number" })
+    .int("Total count must be an integer")
+    .nonnegative("Total count cannot be negative"),
+}).refine(data => data.experienced <= data.total, {
+  message: "Experienced count cannot exceed total count.",
+  path: ["experienced"], // Apply error to 'experienced' field or 'total' or a general path
 });
+
 
 const formSchema = z.object({
   alpha: z.coerce
@@ -61,10 +63,9 @@ const formSchema = z.object({
     .refine(val => val > 0, { message: "Significance Level must be greater than 0" })
     .default(0.05),
   groups: z.array(groupSchema).min(2, "At least two categories are required"),
-  // referenceCategories: z.array(z.string()).min(1, "At least one reference category must be selected"), // Removed
 });
-// Removed .refine for referenceCategories
 
+// This type is for the form's internal state
 type FormValues = z.infer<typeof formSchema>;
 
 
@@ -76,16 +77,15 @@ export default function DisparityCalculator() {
   const reportRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<string>("input");
 
-  const defaultGroups: GroupInput[] = [];
+  const defaultGroups: FormValues['groups'] = []; // Type matches form structure
 
    const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       alpha: 0.05,
       groups: defaultGroups,
-      // referenceCategories: [], // Removed
     },
-     mode: "onChange",
+     mode: "onChange", // Validate on change for immediate feedback
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -93,21 +93,18 @@ export default function DisparityCalculator() {
     name: "groups",
   });
 
-  const groupFields = form.watch('groups');
-  const groupNames = useMemo(() => groupFields.map(g => g.name).filter(name => name.trim() !== ''), [groupFields]);
-
 
   const handleAlphaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value;
       let numValue: number | null = parseFloat(value);
 
         if (value === '') {
-             form.setValue('alpha', '' as any, { shouldValidate: true }); // Allow empty string temp for validation
+             form.setValue('alpha', '' as any, { shouldValidate: true });
         } else if (!isNaN(numValue!) && numValue !== null) {
              const clampedValue = Math.max(Number.MIN_VALUE, Math.min(numValue, 1));
             form.setValue('alpha', clampedValue, { shouldValidate: true });
         } else {
-             form.setValue('alpha', value as any, { shouldValidate: true }); // Let Zod handle non-numeric string
+             form.setValue('alpha', value as any, { shouldValidate: true });
         }
 
 
@@ -115,11 +112,11 @@ export default function DisparityCalculator() {
             if (isValid && reportResults) {
                  const currentData = form.getValues();
                  const alphaValue = currentData.alpha === null || currentData.alpha === undefined ? 0.05 : currentData.alpha;
-                 if (currentData.groups.length >= 2) { // Check only for groups
+                 if (currentData.groups.length >= 2 && currentData.groups.every(g => g.experienced <= g.total)) {
                      onSubmit({...currentData, alpha: alphaValue } as FormValues);
                  } else {
                      setReportResults(null);
-                      setCalculationError("Recalculation skipped: Group requirements not met.");
+                      setCalculationError("Recalculation skipped: Group requirements not met or experienced > total.");
                  }
             } else if (!reportResults) {
                 setCalculationError(null);
@@ -130,7 +127,6 @@ export default function DisparityCalculator() {
   };
 
   useEffect(() => {
-    // Auto-generate a unique name if possible when a new group is added and name is empty
     fields.forEach((field, index) => {
       if (!field.name || field.name.trim() === "") {
         let newName = `Group ${index + 1}`;
@@ -139,7 +135,7 @@ export default function DisparityCalculator() {
         while (existingNames.includes(newName)) {
           newName = `Group ${index + 1}-${suffix++}`;
         }
-        form.setValue(`groups.${index}.name`, newName, { shouldValidate: false }); // Don't validate immediately
+        form.setValue(`groups.${index}.name`, newName, { shouldValidate: false });
       }
     });
   }, [fields, form]);
@@ -150,9 +146,16 @@ export default function DisparityCalculator() {
     setReportResults(null);
 
     try {
+      // Transform groups for calculation: calculate notExperienced
+      const groupsForCalculation: GroupInput[] = data.groups.map(g => ({
+        name: g.name,
+        experienced: g.experienced,
+        notExperienced: g.total - g.experienced, // Calculate notExperienced here
+      }));
+
       const results = performMultiComparisonReport({
-        alpha: data.alpha ?? 0.05, // Ensure alpha has a default if somehow null/undefined
-        groups: data.groups,
+        alpha: data.alpha ?? 0.05,
+        groups: groupsForCalculation, // Use transformed groups
       });
 
       setReportResults(results);
@@ -173,7 +176,7 @@ export default function DisparityCalculator() {
                  setActiveTab("input");
              } else if (warningErrors.length > 0) {
                  const warningMsg = warningErrors.join('; ');
-                  setCalculationError(`${warningMsg}`); // Display warnings but still show report
+                  setCalculationError(`${warningMsg}`);
                   toast({
                       title: "Calculation Warning",
                       description: warningMsg,
@@ -181,8 +184,8 @@ export default function DisparityCalculator() {
                       className: "border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400",
                       duration: 7000,
                   });
-                  setActiveTab("report"); // Warnings allow report display
-             } else { // Only warnings, but they are empty, this case should not happen based on above logic
+                  setActiveTab("report");
+             } else {
                  toast({
                      title: "Calculation Successful",
                      description: "Statistical report has been generated.",
@@ -190,7 +193,7 @@ export default function DisparityCalculator() {
                   setActiveTab("report");
              }
 
-        } else { // No errors at all
+        } else {
             toast({
                 title: "Calculation Successful",
                 description: "Statistical report has been generated.",
@@ -235,7 +238,16 @@ export default function DisparityCalculator() {
          return;
      }
    try {
-       exportToCSV(reportResults, form.getValues() as ExportFormValues, `statistical-report_${Date.now()}.csv`);
+       // Transform form.getValues().groups for export
+       const exportFormValues: ExportFormValues = {
+         alpha: form.getValues('alpha'),
+         groups: form.getValues('groups').map(g => ({
+           name: g.name,
+           experienced: g.experienced,
+           total: g.total, // Export the total value
+         })),
+       };
+       exportToCSV(reportResults, exportFormValues, `statistical-report_${Date.now()}.csv`);
         toast({
            title: "Export Successful",
            description: "Report data exported to CSV.",
@@ -272,11 +284,9 @@ export default function DisparityCalculator() {
 
       if (activeTab !== 'report') {
           setActiveTab('report');
-          // Wait for the tab to switch and content to render
-          await new Promise(resolve => setTimeout(resolve, 300)); // Increased delay for safety
+          await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      // Re-evaluate reportRef.current after tab switch, as it might have been null before
       const currentReportElement = reportRef.current;
        if (!currentReportElement) {
           toast({
@@ -293,61 +303,44 @@ export default function DisparityCalculator() {
       });
 
    try {
-        // Get the current scroll position
         const currentScrollX = window.scrollX;
         const currentScrollY = window.scrollY;
-
-        // Ensure the element is fully visible or scrolled to the top before capture
-        // This helps with html2canvas capturing the entire element correctly
         window.scrollTo(0, 0);
 
-
         const canvas = await html2canvas(currentReportElement, {
-             scale: 2, // Increase scale for better resolution
+             scale: 2,
              useCORS: true,
              logging: false,
-             backgroundColor: '#ffffff', // Ensure a white background for the canvas
-              // Ensure the full content height and width are used
-              // scrollX: -currentReportElement.scrollLeft, // Adjust for any internal scroll
-              // scrollY: -currentReportElement.scrollTop, // Adjust for any internal scroll
+             backgroundColor: '#ffffff',
               windowWidth: currentReportElement.scrollWidth,
               windowHeight: currentReportElement.scrollHeight,
-
         });
 
-        // Restore scroll position
         window.scrollTo(currentScrollX, currentScrollY);
-
 
        const imgData = canvas.toDataURL('image/png');
        const pdf = new jsPDF({
-           orientation: 'p', // 'p' for portrait, 'l' for landscape
-           unit: 'pt', // points
-           format: 'a4', // A4 paper size
+           orientation: 'p',
+           unit: 'pt',
+           format: 'a4',
            putOnlyUsedFonts:true,
-           floatPrecision: 16 // or "smart"
+           floatPrecision: 16
        });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
         const pdfHeight = pdf.internal.pageSize.getHeight();
         const imgWidth = canvas.width;
         const imgHeight = canvas.height;
-
-        const margin = 40; // 40pt margin on all sides
+        const margin = 40;
         const availableWidth = pdfWidth - margin * 2;
         const availableHeight = pdfHeight - margin * 2;
-
-        // Calculate the ratio to fit the image within the available space, maintaining aspect ratio
         const widthRatio = availableWidth / imgWidth;
         const heightRatio = availableHeight / imgHeight;
         const ratio = Math.min(widthRatio, heightRatio);
-
         const effectiveImgWidth = imgWidth * ratio;
         const effectiveImgHeight = imgHeight * ratio;
-
-        // Center the image on the page
          const imgX = margin + (availableWidth - effectiveImgWidth) / 2;
-         const imgY = margin; // Start from top margin
+         const imgY = margin;
 
        pdf.addImage(imgData, 'PNG', imgX, imgY, effectiveImgWidth, effectiveImgHeight);
        const filename = `statistical-report_${Date.now()}.pdf`;
@@ -365,24 +358,20 @@ export default function DisparityCalculator() {
            description: `Could not export report to PDF: ${error.message || 'Unknown error'}`,
            variant: "destructive",
        });
-       // Restore scroll position in case of error too
         const currentScrollX = window.scrollX;
         const currentScrollY = window.scrollY;
         window.scrollTo(currentScrollX, currentScrollY);
-
    }
  };
 
- const currentAlpha = form.watch('alpha');
 
   const renderInterpretation = (
     p: number | null | undefined,
-    alpha: number,
-    isBonferroni: boolean = false
+    alphaThreshold: number,
   ) => {
     if (p === null || p === undefined || isNaN(p)) return <span className="text-xs italic text-muted-foreground">N/A</span>;
 
-    const isSignificant = p < alpha;
+    const isSignificant = p < alphaThreshold;
     const interpretationText = isSignificant
         ? "Statistically different."
         : "Not statistically different.";
@@ -413,7 +402,6 @@ export default function DisparityCalculator() {
                  <CardHeader>
                       <div className="flex justify-between items-center">
                            <CardTitle className="text-2xl text-primary">Input Parameters</CardTitle>
-                           {/* Removed Link to Readme from here, it's in the main page header */}
                       </div>
                  </CardHeader>
                  <CardContent>
@@ -424,12 +412,10 @@ export default function DisparityCalculator() {
                                  <Input
                                      id="alpha"
                                      type="number"
-                                     step="any" // Allows more precision
-                                     // min="0.0000000001" // Smallest positive double
-                                     // max="1"
-                                      value={form.watch('alpha') ?? ''} // Controlled component
+                                     step="any"
+                                      value={form.watch('alpha') ?? ''}
                                      onChange={handleAlphaChange}
-                                     onBlur={() => form.trigger('alpha')} // Validate on blur
+                                     onBlur={() => form.trigger('alpha')}
                                      className={cn(form.formState.errors.alpha ? "border-destructive" : "border-input")}
                                      placeholder="e.g., 0.05"
                                  />
@@ -457,73 +443,102 @@ export default function DisparityCalculator() {
                                     No categories added yet. Click "Add Category" to start.
                                 </p>
                              )}
-                             {fields.map((field, index) => (
-                                 <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card shadow-sm hover:shadow-md transition-shadow">
-                                     <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
-                                         <div className="space-y-1">
-                                             <Label htmlFor={`groups.${index}.name`}>Name</Label>
-                                             <Input
-                                                 id={`groups.${index}.name`}
-                                                 {...form.register(`groups.${index}.name`)}
-                                                 className={cn(form.formState.errors.groups?.[index]?.name ? "border-destructive" : "border-input")}
-                                                  onChange={(e) => {
-                                                     form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
-                                                  }}
-                                                  onBlur={() => form.trigger(`groups.${index}.name`)} // Validate on blur
-                                             />
-                                             {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
+                             {fields.map((field, index) => {
+                                 const experiencedValue = form.watch(`groups.${index}.experienced`);
+                                 const totalValue = form.watch(`groups.${index}.total`);
+                                 const notExperiencedValue = (typeof totalValue === 'number' && typeof experiencedValue === 'number' && totalValue >= experiencedValue)
+                                     ? totalValue - experiencedValue
+                                     : '';
+
+                                 return (
+                                     <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card shadow-sm hover:shadow-md transition-shadow">
+                                         <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-2"> {/* Changed to 4 cols */}
+                                             <div className="space-y-1">
+                                                 <Label htmlFor={`groups.${index}.name`}>Name</Label>
+                                                 <Input
+                                                     id={`groups.${index}.name`}
+                                                     {...form.register(`groups.${index}.name`)}
+                                                     className={cn(form.formState.errors.groups?.[index]?.name ? "border-destructive" : "border-input")}
+                                                      onChange={(e) => {
+                                                         form.setValue(`groups.${index}.name`, e.target.value, { shouldValidate: true });
+                                                      }}
+                                                      onBlur={() => form.trigger(`groups.${index}.name`)}
+                                                 />
+                                                 {form.formState.errors.groups?.[index]?.name && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.name?.message}</p>}
+                                             </div>
+                                             <div className="space-y-1">
+                                                 <Label htmlFor={`groups.${index}.experienced`}># Experienced Outcome</Label>
+                                                 <Input
+                                                     id={`groups.${index}.experienced`}
+                                                     type="number"
+                                                     min="0"
+                                                     step="1"
+                                                      {...form.register(`groups.${index}.experienced`)}
+                                                      className={cn(form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input")}
+                                                      onChange={(e) => {
+                                                          const val = e.target.value === '' ? null : Number(e.target.value);
+                                                          form.setValue(`groups.${index}.experienced`, val as number, { shouldValidate: true });
+                                                          form.trigger(`groups.${index}.total`); // Also trigger validation on total for x <= total rule
+                                                      }}
+                                                      onBlur={() => {
+                                                        form.trigger(`groups.${index}.experienced`);
+                                                        form.trigger(`groups.${index}.total`);
+                                                      }}
+                                                 />
+                                                 {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
+                                             </div>
+                                              <div className="space-y-1">
+                                                 <Label htmlFor={`groups.${index}.total`}># Total</Label>
+                                                 <Input
+                                                     id={`groups.${index}.total`}
+                                                     type="number"
+                                                     min="0"
+                                                     step="1"
+                                                      {...form.register(`groups.${index}.total`)}
+                                                      className={cn(form.formState.errors.groups?.[index]?.total ? "border-destructive" : "border-input")}
+                                                       onChange={(e) => {
+                                                           const val = e.target.value === '' ? null : Number(e.target.value);
+                                                           form.setValue(`groups.${index}.total`, val as number, { shouldValidate: true });
+                                                           form.trigger(`groups.${index}.experienced`); // Trigger validation on experienced
+                                                       }}
+                                                       onBlur={() => {
+                                                        form.trigger(`groups.${index}.total`);
+                                                        form.trigger(`groups.${index}.experienced`);
+                                                       }}
+                                                 />
+                                                 {form.formState.errors.groups?.[index]?.total && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.total?.message}</p>}
+                                             </div>
+                                             <div className="space-y-1">
+                                                 <Label htmlFor={`groups.${index}.notExperiencedDisplay`}># Did Not Experience</Label>
+                                                 <Input
+                                                     id={`groups.${index}.notExperiencedDisplay`}
+                                                     type="text" // Display only, not for form submission
+                                                     value={notExperiencedValue}
+                                                     readOnly
+                                                     disabled
+                                                     className="bg-muted border-input text-muted-foreground" // Style as disabled/readonly
+                                                 />
+                                                 {/* No error message needed for this display field */}
+                                             </div>
                                          </div>
-                                         <div className="space-y-1">
-                                             <Label htmlFor={`groups.${index}.experienced`}># Experienced Outcome</Label>
-                                             <Input
-                                                 id={`groups.${index}.experienced`}
-                                                 type="number"
-                                                 min="0"
-                                                 step="1"
-                                                  {...form.register(`groups.${index}.experienced`)}
-                                                  className={cn(form.formState.errors.groups?.[index]?.experienced ? "border-destructive" : "border-input")}
-                                                  onChange={(e) => { // Ensure number conversion, handle empty string for validation
-                                                      form.setValue(`groups.${index}.experienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
-                                                  }}
-                                                  onBlur={() => form.trigger(`groups.${index}.experienced`)} // Validate on blur
-                                             />
-                                             {form.formState.errors.groups?.[index]?.experienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.experienced?.message}</p>}
-                                         </div>
-                                         <div className="space-y-1">
-                                             <Label htmlFor={`groups.${index}.notExperienced`}># Did Not Experience</Label>
-                                             <Input
-                                                 id={`groups.${index}.notExperienced`}
-                                                 type="number"
-                                                 min="0"
-                                                 step="1"
-                                                  {...form.register(`groups.${index}.notExperienced`)}
-                                                  className={cn(form.formState.errors.groups?.[index]?.notExperienced ? "border-destructive" : "border-input")}
-                                                   onChange={(e) => { // Ensure number conversion
-                                                       form.setValue(`groups.${index}.notExperienced`, e.target.value === '' ? null : Number(e.target.value), { shouldValidate: true });
-                                                   }}
-                                                   onBlur={() => form.trigger(`groups.${index}.notExperienced`)} // Validate on blur
-                                             />
-                                             {form.formState.errors.groups?.[index]?.notExperienced && <p className="text-sm text-destructive">{form.formState.errors.groups?.[index]?.notExperienced?.message}</p>}
-                                         </div>
+                                         <Button
+                                             type="button"
+                                             variant="ghost"
+                                             size="icon"
+                                             onClick={() => {
+                                                 remove(index);
+                                                  setReportResults(null);
+                                                  setCalculationError(null);
+                                              }}
+                                             disabled={fields.length <= 0}
+                                             className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
+                                             aria-label="Remove category"
+                                         >
+                                             <Trash2 className="h-4 w-4" />
+                                         </Button>
                                      </div>
-                                     <Button
-                                         type="button"
-                                         variant="ghost"
-                                         size="icon"
-                                         onClick={() => {
-                                             remove(index);
-                                              // Optionally reset report if a group is removed after calculation
-                                              setReportResults(null);
-                                              setCalculationError(null); // Clear any previous errors
-                                          }}
-                                          disabled={fields.length <= 0} // Disable if no fields to remove (should not happen if button shown)
-                                         className="mt-6 text-destructive hover:bg-destructive/10 disabled:text-muted-foreground disabled:hover:bg-transparent"
-                                         aria-label="Remove category"
-                                     >
-                                         <Trash2 className="h-4 w-4" />
-                                     </Button>
-                                 </div>
-                             ))}
+                                 );
+                             })}
                              <Button
                                  type="button"
                                  variant="outline"
@@ -534,7 +549,7 @@ export default function DisparityCalculator() {
                                       while (existingNames.includes(newName)) {
                                           newName = `Group ${fields.length + 1}-${suffix++}`;
                                       }
-                                      append({ name: newName, experienced: 0, notExperienced: 0 });
+                                      append({ name: newName, experienced: 0, total: 0 });
                                   }}
                                  className="mt-2"
                              >
@@ -543,8 +558,6 @@ export default function DisparityCalculator() {
                              {form.formState.errors.groups?.root && <p className="text-sm text-destructive mt-2">{form.formState.errors.groups.root.message}</p>}
                              {form.formState.errors.groups && typeof form.formState.errors.groups.message === 'string' && !form.formState.errors.groups.root && <p className="text-sm text-destructive mt-2">{form.formState.errors.groups.message}</p>}
                          </div>
-
-                         {/* Removed Reference Category Selection Section */}
 
                          <div className="flex flex-col sm:flex-row justify-end gap-4 pt-4">
                              <Button type="button" variant="outline" onClick={handleReset}>
@@ -560,8 +573,8 @@ export default function DisparityCalculator() {
          </TabsContent>
 
          <TabsContent value="report">
-             <div ref={reportRef} className="bg-white p-4 rounded-md shadow"> {/* Ensure reportRef is on the direct parent of content to be captured */}
-                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none"> {/* Removed border for cleaner PDF */}
+             <div ref={reportRef} className="bg-white p-4 rounded-md shadow">
+                 <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none">
                       <CardHeader className="flex flex-row justify-between items-center pb-2">
                           <CardTitle className="text-2xl text-primary">Statistical Report</CardTitle>
                           <div className="flex gap-2">
@@ -587,14 +600,14 @@ export default function DisparityCalculator() {
                       </CardHeader>
 
                      <CardContent className="space-y-6 pt-4">
-                          {calculationError && !calculationError.toLowerCase().includes('warning:') && ( // Only show error if not a warning
+                          {calculationError && !calculationError.toLowerCase().includes('warning:') && (
                              <Alert variant={"destructive"} className="w-full mb-4">
                                  <AlertCircle className="h-4 w-4" />
                                  <AlertTitle>Error</AlertTitle>
                                  <AlertDescription>{calculationError}</AlertDescription>
                              </Alert>
                           )}
-                          {calculationError && calculationError.toLowerCase().includes('warning:') && ( // Show warning separately
+                          {calculationError && calculationError.toLowerCase().includes('warning:') && (
                              <Alert variant="default" className={cn("w-full mb-4 border-yellow-500/50 text-yellow-700 dark:border-yellow-600/60 dark:text-yellow-300 [&>svg]:text-yellow-600 dark:[&>svg]:text-yellow-400")}>
                                  <AlertCircle className="h-4 w-4" />
                                  <AlertTitle>Warning</AlertTitle>
@@ -603,12 +616,11 @@ export default function DisparityCalculator() {
                           )}
 
 
-                        {reportResults && form.formState.isValid && ( // Only show if form is valid and results exist
+                        {reportResults && form.formState.isValid && (
                              <div className="space-y-2 p-4 border rounded-md bg-card mb-6 shadow">
                                 <h3 className="text-md font-semibold text-primary border-b pb-1 mb-2">Report Parameters</h3>
                                 <div className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                                      <div><strong>Significance Level (α):</strong> {formatDecimal(form.getValues('alpha'), 4)}</div>
-                                     {/* <div><strong>Reference Categories:</strong> {selectedReferenceCategories.join(', ') || 'N/A'}</div> // Removed */}
                                 </div>
                              </div>
                         )}
@@ -635,7 +647,7 @@ export default function DisparityCalculator() {
                                               </TableRow>
                                          </TableHeader>
                                          <TableBody>
-                                             {reportResults.contingencySummary.map((row, index) => (
+                                             {reportResults.contingencySummary.map((row) => (
                                                  <TableRow key={row.name} className={cn("table-row-alt", "hover:bg-muted/50")}>
                                                       <TableCell className="font-medium py-2 px-4">{row.name}</TableCell>
                                                       <TableCell className="text-right py-2 px-4 table-cell-tint border-l">{row.notExperienced.toLocaleString()}</TableCell>
@@ -787,7 +799,7 @@ export default function DisparityCalculator() {
                                                                         isDiagonal ? 'bg-muted/30' : 'table-cell-tint',
                                                                     )}
                                                                 >
-                                                                     {isDiagonal ? '-' : formatScientific(pValue, 3)}
+                                                                     {isDiagonal ? '-' : (pValue === null || isNaN(pValue as number)) ? 'N/A' : formatScientific(pValue as number, 3)}
                                                                 </TableCell>
                                                             );
                                                         })}
@@ -801,9 +813,6 @@ export default function DisparityCalculator() {
                                       </p>
                                 </div>
                            )}
-
-                         {/* Removed Comparison to Reference Categories Section */}
-
 
                          {!reportResults && !calculationError && (!form.formState.isValid || fields.length < 2) && (
                              <p className="text-center text-muted-foreground italic py-6">
@@ -823,6 +832,3 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
-
-    
-

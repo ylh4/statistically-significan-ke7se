@@ -1,20 +1,18 @@
 
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { MultiComparisonResults } from "./calculations"; // Import necessary types
-import { formatScientific, formatDecimal, formatPercent } from "./calculations"; // Import formatters
-// import type { FormValues as LocalFormValues } from "@/components/disparity-calculator"; // No longer needed
+import type { MultiComparisonResults } from "./calculations";
+import { formatScientific, formatDecimal, formatPercent } from "./calculations";
 
-// Define the type expected by exportToCSV if it differs from the local FormValues
-// If they are the same, you can potentially remove this and use the imported LocalFormValues directly.
+// Define the type expected by exportToCSV for the input part.
+// It now includes 'total' instead of 'notExperienced'.
 export interface ExportFormValues {
   alpha: number;
   groups: {
     name: string;
     experienced: number;
-    notExperienced: number;
+    total: number; // Changed from notExperienced to total
   }[];
-  // referenceCategories: string[]; // Removed
 }
 
 
@@ -28,7 +26,6 @@ function escapeCSV(field: string | number | null | undefined): string {
         return '';
     }
     const stringField = String(field);
-    // Escape double quotes by doubling them and wrap the field in double quotes if it contains commas, double quotes, or newlines
     if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
         return `"${stringField.replace(/"/g, '""')}"`;
     }
@@ -37,8 +34,8 @@ function escapeCSV(field: string | number | null | undefined): string {
 
 // Updated function to convert MultiComparisonResults to CSV string and trigger download
 export function exportToCSV(
-    reportData: MultiComparisonResults | null, // Expects the full report object
-    inputData: ExportFormValues, // Use the renamed or specific type for export data
+    reportData: MultiComparisonResults | null,
+    inputData: ExportFormValues, // Uses the updated ExportFormValues
     filename: string = 'statistical-report.csv'
 ) {
   if (!reportData) {
@@ -51,14 +48,15 @@ export function exportToCSV(
   // --- Input Parameters Section ---
   csvRows.push("Input Parameters");
   csvRows.push(`Significance Level (α),${escapeCSV(inputData.alpha)}`);
-  // csvRows.push(`Selected Reference Category(ies),${escapeCSV(inputData.referenceCategories.join('; '))}`); // Removed
   csvRows.push(""); // Blank row
 
   // --- Categories Input Section ---
   csvRows.push("Input Categories (Groups)");
-  csvRows.push("Category Name,# Experienced,# Not Experienced");
+  // Updated headers for input section
+  csvRows.push("Category Name,# Experienced,# Total,# Did Not Experience (Calculated)");
   inputData.groups.forEach(group => {
-    csvRows.push(`${escapeCSV(group.name)},${escapeCSV(group.experienced)},${escapeCSV(group.notExperienced)}`);
+    const notExperienced = group.total - group.experienced; // Calculate for export
+    csvRows.push(`${escapeCSV(group.name)},${escapeCSV(group.experienced)},${escapeCSV(group.total)},${escapeCSV(notExperienced)}`);
   });
   csvRows.push(""); // Blank row
 
@@ -162,14 +160,14 @@ export function exportToCSV(
              formattedPValue = "-";
         } else if (pValue !== null && !isNaN(pValue as number)) {
              formattedPValue = formatScientific(pValue as number, 3);
+        } else if (isNaN(pValue as number)) { // Handle explicit NaN for invalid pairs
+            formattedPValue = "N/A (Invalid Pair)";
         }
         rowValues.push(escapeCSV(formattedPValue));
       });
       csvRows.push(rowValues.join(','));
     });
     csvRows.push("");
-
-     // Removed Pairwise Interpretation (vs Selected References) section
   }
 
     if (reportData.errors && reportData.errors.length > 0) {
@@ -197,5 +195,3 @@ export function exportToCSV(
     throw new Error("CSV download not supported.");
   }
 }
-
-    
