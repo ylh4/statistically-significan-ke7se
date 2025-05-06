@@ -1,17 +1,18 @@
 
+
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import type { MultiComparisonResults } from "./calculations";
 import { formatScientific, formatDecimal, formatPercent } from "./calculations";
 
 // Define the type expected by exportToCSV for the input part.
-// It now includes 'total' instead of 'notExperienced'.
 export interface ExportFormValues {
+  reportTitle?: string;
   alpha: number;
   groups: {
     name: string;
     experienced: number;
-    total: number; // Changed from notExperienced to total
+    total: number;
   }[];
 }
 
@@ -35,7 +36,7 @@ function escapeCSV(field: string | number | null | undefined): string {
 // Updated function to convert MultiComparisonResults to CSV string and trigger download
 export function exportToCSV(
     reportData: MultiComparisonResults | null,
-    inputData: ExportFormValues, // Uses the updated ExportFormValues
+    inputData: ExportFormValues,
     filename: string = 'statistical-report.csv'
 ) {
   if (!reportData) {
@@ -45,6 +46,12 @@ export function exportToCSV(
   const csvRows: string[] = [];
   const groupNames = reportData.contingencySummary?.map(g => g.name) ?? [];
 
+  // --- Report Title Section ---
+  if (inputData.reportTitle) {
+    csvRows.push(`Report Title:,${escapeCSV(inputData.reportTitle)}`);
+    csvRows.push(""); // Blank row
+  }
+
   // --- Input Parameters Section ---
   csvRows.push("Input Parameters");
   csvRows.push(`Significance Level (α),${escapeCSV(inputData.alpha)}`);
@@ -52,10 +59,9 @@ export function exportToCSV(
 
   // --- Categories Input Section ---
   csvRows.push("Input Categories (Groups)");
-  // Updated headers for input section
   csvRows.push("Category Name,# Experienced,# Total,# Did Not Experience (Calculated)");
   inputData.groups.forEach(group => {
-    const notExperienced = group.total - group.experienced; // Calculate for export
+    const notExperienced = group.total - group.experienced;
     csvRows.push(`${escapeCSV(group.name)},${escapeCSV(group.experienced)},${escapeCSV(group.total)},${escapeCSV(notExperienced)}`);
   });
   csvRows.push(""); // Blank row
@@ -113,10 +119,10 @@ export function exportToCSV(
     csvRows.push(`Limit (Significance Level α),${escapeCSV(formatDecimal(alpha, 4))}`);
     csvRows.push(`Degrees of Freedom,${escapeCSV(stats.degreesOfFreedom)}`);
     csvRows.push(`# of Pairwise Comparisons,${escapeCSV(stats.numComparisons)}`);
-     let correctedAlpha = NaN;
+     let correctedAlphaNum = NaN;
      if (stats.numComparisons > 0) {
-        correctedAlpha = alpha / stats.numComparisons;
-        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatScientific(correctedAlpha, 3))}`);
+        correctedAlphaNum = alpha / stats.numComparisons;
+        csvRows.push(`Bonferroni Corrected Alpha (α_bonf),${escapeCSV(formatScientific(correctedAlphaNum, 3))}`);
      } else {
         csvRows.push(`Bonferroni Corrected Alpha (α_bonf),N/A`);
      }
@@ -160,7 +166,11 @@ export function exportToCSV(
              formattedPValue = "-";
         } else if (pValue !== null && !isNaN(pValue as number)) {
              formattedPValue = formatScientific(pValue as number, 3);
-        } else if (isNaN(pValue as number)) { // Handle explicit NaN for invalid pairs
+             if (pValue < correctedAlpha) {
+                // Optionally mark significant values, e.g., by appending '*' or similar
+                // formattedPValue += " (*)"; // This is just an example for CSV, UI handles coloring
+             }
+        } else if (isNaN(pValue as number)) {
             formattedPValue = "N/A (Invalid Pair)";
         }
         rowValues.push(escapeCSV(formattedPValue));
@@ -195,3 +205,4 @@ export function exportToCSV(
     throw new Error("CSV download not supported.");
   }
 }
+

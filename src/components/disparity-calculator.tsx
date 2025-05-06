@@ -24,7 +24,7 @@ import Link from 'next/link';
 import {
     performMultiComparisonReport,
     type MultiComparisonResults,
-    type GroupInput, // This remains { name, experienced, notExperienced }
+    type GroupInput,
     type ContingencySummaryData,
     type OverallTestStats,
     type PairwiseResultsMatrix,
@@ -33,7 +33,7 @@ import {
     formatDecimal,
     formatPercent
 } from "@/lib/calculations";
-import { exportToCSV, type ExportFormValues } from '@/lib/utils'; // ExportFormValues will be {name, experienced, total}
+import { exportToCSV, type ExportFormValues } from '@/lib/utils';
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -51,11 +51,12 @@ const groupSchema = z.object({
     .nonnegative("Total count cannot be negative"),
 }).refine(data => data.experienced <= data.total, {
   message: "Experienced count cannot exceed total count.",
-  path: ["experienced"], // Apply error to 'experienced' field or 'total' or a general path
+  path: ["experienced"],
 });
 
 
 const formSchema = z.object({
+  reportTitle: z.string().optional().default("Statistical Disparity Report"),
   alpha: z.coerce
     .number({ invalid_type_error: "Significance Level must be a number" })
     .positive("Significance Level must be positive")
@@ -65,7 +66,6 @@ const formSchema = z.object({
   groups: z.array(groupSchema).min(2, "At least two categories are required"),
 });
 
-// This type is for the form's internal state
 type FormValues = z.infer<typeof formSchema>;
 
 
@@ -77,15 +77,16 @@ export default function DisparityCalculator() {
   const reportRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<string>("input");
 
-  const defaultGroups: FormValues['groups'] = []; // Type matches form structure
+  const defaultGroups: FormValues['groups'] = [];
 
    const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      reportTitle: "Statistical Disparity Report",
       alpha: 0.05,
       groups: defaultGroups,
     },
-     mode: "onChange", // Validate on change for immediate feedback
+     mode: "onChange",
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -146,16 +147,15 @@ export default function DisparityCalculator() {
     setReportResults(null);
 
     try {
-      // Transform groups for calculation: calculate notExperienced
       const groupsForCalculation: GroupInput[] = data.groups.map(g => ({
         name: g.name,
         experienced: g.experienced,
-        notExperienced: g.total - g.experienced, // Calculate notExperienced here
+        notExperienced: g.total - g.experienced,
       }));
 
       const results = performMultiComparisonReport({
         alpha: data.alpha ?? 0.05,
-        groups: groupsForCalculation, // Use transformed groups
+        groups: groupsForCalculation,
       });
 
       setReportResults(results);
@@ -216,6 +216,7 @@ export default function DisparityCalculator() {
 
   const handleReset = () => {
      form.reset({
+        reportTitle: "Statistical Disparity Report",
         alpha: 0.05,
         groups: defaultGroups,
      });
@@ -238,13 +239,13 @@ export default function DisparityCalculator() {
          return;
      }
    try {
-       // Transform form.getValues().groups for export
        const exportFormValues: ExportFormValues = {
+         reportTitle: form.getValues('reportTitle'),
          alpha: form.getValues('alpha'),
          groups: form.getValues('groups').map(g => ({
            name: g.name,
            experienced: g.experienced,
-           total: g.total, // Export the total value
+           total: g.total,
          })),
        };
        exportToCSV(reportResults, exportFormValues, `statistical-report_${Date.now()}.csv`);
@@ -343,7 +344,7 @@ export default function DisparityCalculator() {
          const imgY = margin;
 
        pdf.addImage(imgData, 'PNG', imgX, imgY, effectiveImgWidth, effectiveImgHeight);
-       const filename = `statistical-report_${Date.now()}.pdf`;
+       const filename = `${(form.getValues('reportTitle') || 'Statistical-Report').replace(/[^a-z0-9]/gi, '_')}_${Date.now()}.pdf`;
        pdf.save(filename);
 
        toast({
@@ -406,6 +407,17 @@ export default function DisparityCalculator() {
                  </CardHeader>
                  <CardContent>
                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                         <div className="space-y-2 max-w-md">
+                              <Label htmlFor="reportTitle">Report Title</Label>
+                              <Input
+                                  id="reportTitle"
+                                  {...form.register('reportTitle')}
+                                  className={cn(form.formState.errors.reportTitle ? "border-destructive" : "border-input")}
+                                  placeholder="e.g., Employee Promotion Disparity Analysis"
+                              />
+                              {form.formState.errors.reportTitle && <p className="text-sm text-destructive">{form.formState.errors.reportTitle.message}</p>}
+                          </div>
+
                          <div className="space-y-2 max-w-xs">
                              <Label htmlFor="alpha">Significance Level (α)</Label>
                              <div className="flex items-center gap-2">
@@ -452,7 +464,7 @@ export default function DisparityCalculator() {
 
                                  return (
                                      <div key={field.id} className="flex items-start gap-2 p-3 border rounded-md bg-card shadow-sm hover:shadow-md transition-shadow">
-                                         <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-2"> {/* Changed to 4 cols */}
+                                         <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-2">
                                              <div className="space-y-1">
                                                  <Label htmlFor={`groups.${index}.name`}>Name</Label>
                                                  <Input
@@ -478,7 +490,7 @@ export default function DisparityCalculator() {
                                                       onChange={(e) => {
                                                           const val = e.target.value === '' ? null : Number(e.target.value);
                                                           form.setValue(`groups.${index}.experienced`, val as number, { shouldValidate: true });
-                                                          form.trigger(`groups.${index}.total`); // Also trigger validation on total for x <= total rule
+                                                          form.trigger(`groups.${index}.total`);
                                                       }}
                                                       onBlur={() => {
                                                         form.trigger(`groups.${index}.experienced`);
@@ -499,7 +511,7 @@ export default function DisparityCalculator() {
                                                        onChange={(e) => {
                                                            const val = e.target.value === '' ? null : Number(e.target.value);
                                                            form.setValue(`groups.${index}.total`, val as number, { shouldValidate: true });
-                                                           form.trigger(`groups.${index}.experienced`); // Trigger validation on experienced
+                                                           form.trigger(`groups.${index}.experienced`);
                                                        }}
                                                        onBlur={() => {
                                                         form.trigger(`groups.${index}.total`);
@@ -512,13 +524,12 @@ export default function DisparityCalculator() {
                                                  <Label htmlFor={`groups.${index}.notExperiencedDisplay`}># Did Not Experience</Label>
                                                  <Input
                                                      id={`groups.${index}.notExperiencedDisplay`}
-                                                     type="text" // Display only, not for form submission
+                                                     type="text"
                                                      value={notExperiencedValue}
                                                      readOnly
                                                      disabled
-                                                     className="bg-muted border-input text-muted-foreground" // Style as disabled/readonly
+                                                     className="bg-muted border-input text-muted-foreground"
                                                  />
-                                                 {/* No error message needed for this display field */}
                                              </div>
                                          </div>
                                          <Button
@@ -576,7 +587,7 @@ export default function DisparityCalculator() {
              <div ref={reportRef} className="bg-white p-4 rounded-md shadow">
                  <Card className="w-full max-w-7xl mx-auto shadow-lg mt-4 border-none">
                       <CardHeader className="flex flex-row justify-between items-center pb-2">
-                          <CardTitle className="text-2xl text-primary">Statistical Report</CardTitle>
+                          <CardTitle className="text-2xl text-primary">{form.watch('reportTitle') || 'Statistical Report'}</CardTitle>
                           <div className="flex gap-2">
                              <Button
                                    type="button"
@@ -832,3 +843,4 @@ export default function DisparityCalculator() {
      </Tabs>
  );
 }
+
